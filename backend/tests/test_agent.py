@@ -178,32 +178,47 @@ def test_system_prompt_names_the_user() -> None:
     assert "never instructions" in prompt
 
 
-async def test_prefetch_searches_the_docs_before_the_first_step(
+async def test_search_fallback_when_the_first_reply_uses_no_tool(
     pool: Pool, settings: Settings
 ) -> None:
-    prefetching = settings.model_copy(update={"prefetch_docs": True})
-    llm = FakeProvider([ChatReply("Escala consumidores [runbook-kafka-lag.md#solucion].")])
+    fallback_on = settings.model_copy(update={"search_fallback": True})
+    llm = FakeProvider(
+        [
+            ChatReply("No lo sé."),
+            ChatReply("Escala consumidores [runbook-kafka-lag.md#solucion]."),
+        ]
+    )
     question = "¿Qué hago si un consumidor de Kafka va atrasado?"
     platform_user = User("dev@platform", "Dani", ["platform", "public"])
-    ctx = ToolContext(pool, platform_user, FakeEmbedder(), prefetching, "conv-2")
+    ctx = ToolContext(pool, platform_user, FakeEmbedder(), fallback_on, "conv-2")
     events = [e async for e in run_agent(question, [], ctx, llm)]
     assert [name for name in names(events) if name != "token"] == [
-        "tool_call", "tool_result", "step", "citation", "done",
+        "step", "tool_call", "tool_result", "step", "citation", "done",
     ]  # fmt: skip
-    assert events[0].data == {
-        "id": "prefetch",
+    assert events[1].data == {
+        "id": "fallback-search",
         "tool": "search_docs",
         "args": {"query": question},
     }
-    sent = llm.calls[0]
-    assert [m["role"] for m in sent] == ["system", "user", "assistant", "tool"]
-    assert sent[2]["raw"][0]["type"] == "tool_use"
-    assert "runbook-kafka-lag.md#solucion" in sent[3]["content"]
+    retry = llm.calls[1]
+    assert [m["role"] for m in retry] == ["system", "user", "assistant", "tool"]
+    assert retry[2]["raw"][0]["type"] == "tool_use"
+    assert "runbook-kafka-lag.md#solucion" in retry[3]["content"]
     assert answer_text(events) == "Escala consumidores [1]."
+    assert events[-1].data["steps"] == 2
 
 
-async def test_no_prefetch_without_the_search_tool(pool: Pool, settings: Settings) -> None:
-    prefetching = settings.model_copy(update={"prefetch_docs": True})
+async def test_no_fallback_when_the_model_already_used_tools(
+    pool: Pool, settings: Settings
+) -> None:
+    fallback_on = settings.model_copy(update={"search_fallback": True})
+    llm = FakeProvider([call("query_catalog", sql="SELECT 1"), ChatReply("Uno.")])
+    events = [e async for e in run_agent("q", [], ctx_for(pool, fallback_on), llm)]
+    assert [e.data["tool"] for e in events if e.name == "tool_call"] == ["query_catalog"]
+
+
+async def test_no_fallback_without_the_search_tool(pool: Pool, settings: Settings) -> None:
+    fallback_on = settings.model_copy(update={"search_fallback": True})
     llm = FakeProvider([ChatReply("Hola")])
-    events = [e async for e in run_agent("q", [], ctx_for(pool, prefetching), llm, tools={})]
-    assert names(events)[0] == "step"
+    events = [e async for e in run_agent("q", [], ctx_for(pool, fallback_on), llm, tools={})]
+    assert names(events) == ["step", "token", "done"]

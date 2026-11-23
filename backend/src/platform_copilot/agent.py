@@ -95,22 +95,6 @@ async def run_agent(
     started = time.perf_counter()
     await _audit(ctx, "question", {"text": question})
 
-    if ctx.settings.prefetch_docs and search_docs.TOOL.name in tools:
-        # Small models often answer without searching. One retrieval up front guarantees every
-        # answer starts from the documentation; the model can still call more tools after it.
-        prefetch = ToolCall("prefetch", search_docs.TOOL.name, {"query": question})
-        raw = [
-            {
-                "type": "tool_use",
-                "id": prefetch.id,
-                "name": prefetch.name,
-                "input": {"query": question},
-            }
-        ]
-        messages.append(assistant_message(ChatReply("", [prefetch], raw=raw)))
-        async for event in _execute(prefetch, ctx, tools, retrieved, messages):
-            yield event
-
     for step in range(1, max_steps + 1):
         yield Event("step", {"n": step, "max": max_steps})
         try:
@@ -120,6 +104,16 @@ async def run_agent(
             yield Event("error", {"code": "llm_error", "message": str(error)})
             return
         tokens += reply.input_tokens + reply.output_tokens
+        if not reply.tool_calls and _needs_fallback(step, ctx, tools):
+            # Measured with qwen2.5:3b: it often answers "I don't know" without searching. If the
+            # first reply used no tool, search the docs with the question and let it try again.
+            fallback = ToolCall("fallback-search", search_docs.TOOL.name, {"query": question})
+            messages.append(
+                assistant_message(ChatReply("", [fallback], raw=_raw_tool_use(fallback)))
+            )
+            async for event in _execute(fallback, ctx, tools, retrieved, messages):
+                yield event
+            continue
         if not reply.tool_calls:
             stats = {"steps": step, "tokens": tokens, "model": llm.model, "started": started}
             async for event in _finish(reply.text, retrieved, ctx, stats):
@@ -133,6 +127,15 @@ async def run_agent(
     message = f"Stopped after {max_steps} steps without a final answer"
     await _audit(ctx, "error", {"code": "max_steps", "message": message})
     yield Event("error", {"code": "max_steps", "message": message})
+
+
+def _needs_fallback(step: int, ctx: ToolContext, tools: dict[str, Tool]) -> bool:
+    return step == 1 and ctx.settings.search_fallback and search_docs.TOOL.name in tools
+
+
+def _raw_tool_use(call: ToolCall) -> list[dict[str, Any]]:
+    """The same call in Claude's content-block format, so both providers can replay it."""
+    return [{"type": "tool_use", "id": call.id, "name": call.name, "input": call.arguments}]
 
 
 async def _execute(

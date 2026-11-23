@@ -46,7 +46,7 @@ async def conn() -> AsyncIterator[psycopg.AsyncConnection[dict[str, object]]]:
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        database_url=TEST_DB_URL, llm_provider="fake", embed_provider="fake", prefetch_docs=False
+        database_url=TEST_DB_URL, llm_provider="fake", embed_provider="fake", search_fallback=False
     )
 
 
