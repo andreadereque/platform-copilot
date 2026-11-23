@@ -1,5 +1,3 @@
-from collections.abc import AsyncIterator
-
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
@@ -7,7 +5,7 @@ from fastapi.testclient import TestClient
 from platform_copilot import audit
 from platform_copilot.access import AccessError, create_request, decide, get_request
 from platform_copilot.config import Settings
-from platform_copilot.db import Pool, make_pool
+from platform_copilot.db import Pool
 from platform_copilot.embeddings import FakeEmbedder
 from platform_copilot.tools.base import ToolContext, ToolError
 from platform_copilot.tools.create_access_request import TOOL, CreateAccessRequestArgs
@@ -15,14 +13,6 @@ from platform_copilot.users import User
 
 Conn = psycopg.AsyncConnection[dict[str, object]]
 LAURA = User("laura@sales", "Laura Gil", ["sales", "public"])
-
-
-@pytest.fixture
-async def pool(conn: Conn, settings: Settings) -> AsyncIterator[Pool]:
-    db_pool = make_pool(settings.database_url)
-    await db_pool.open()
-    yield db_pool
-    await db_pool.close()
 
 
 async def test_create_request_is_pending_with_the_owner(pool: Pool) -> None:

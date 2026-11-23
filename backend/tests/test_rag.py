@@ -1,5 +1,4 @@
 import json
-from collections.abc import AsyncIterator
 from pathlib import Path
 
 import httpx
@@ -7,7 +6,7 @@ import psycopg
 import pytest
 
 from platform_copilot.config import Settings
-from platform_copilot.db import Pool, make_pool
+from platform_copilot.db import Pool
 from platform_copilot.embeddings import (
     EmbeddingError,
     FakeEmbedder,
@@ -24,7 +23,6 @@ from platform_copilot.rag.chunking import (
 )
 from platform_copilot.rag.ingest import _first, ingest_docs
 from platform_copilot.rag.search import hybrid_search
-from platform_copilot.seed import SEED_DIR
 from platform_copilot.tools.base import ToolContext
 from platform_copilot.tools.search_docs import TOOL, SearchDocsArgs
 from platform_copilot.users import UnknownUserError, User, get_user, list_users
@@ -123,15 +121,6 @@ def test_to_pgvector_format() -> None:
 
 
 # ---------- ingest + search ----------
-
-
-@pytest.fixture
-async def pool(conn: Conn, settings: Settings) -> AsyncIterator[Pool]:
-    await ingest_docs(conn, SEED_DIR / "docs", FakeEmbedder())
-    db_pool = make_pool(settings.database_url)
-    await db_pool.open()
-    yield db_pool
-    await db_pool.close()
 
 
 async def test_ingest_loads_every_document(conn: Conn, pool: Pool) -> None:

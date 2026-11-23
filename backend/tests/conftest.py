@@ -10,7 +10,10 @@ from fastapi.testclient import TestClient
 from psycopg.rows import dict_row
 
 from platform_copilot.config import Settings
+from platform_copilot.db import Pool, make_pool
+from platform_copilot.embeddings import FakeEmbedder
 from platform_copilot.main import create_app
+from platform_copilot.rag.ingest import ingest_docs
 from platform_copilot.seed import SEED_DIR, load_users_and_products
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -51,3 +54,15 @@ def client(
 ) -> Iterator[TestClient]:
     with TestClient(create_app(settings)) as test_client:
         yield test_client
+
+
+@pytest.fixture
+async def pool(
+    conn: psycopg.AsyncConnection[dict[str, object]], settings: Settings
+) -> AsyncIterator[Pool]:
+    """An open pool on the clean database, with the docs ingested by the fake embedder."""
+    await ingest_docs(conn, SEED_DIR / "docs", FakeEmbedder())
+    db_pool = make_pool(settings.database_url)
+    await db_pool.open()
+    yield db_pool
+    await db_pool.close()

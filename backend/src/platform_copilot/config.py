@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     embed_model: str = "nomic-embed-text"
     ollama_url: str = "http://localhost:11434"
     anthropic_api_key: str = ""
+    claude_model: str = "claude-opus-5-5"
+    claude_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     max_steps: int = 5
     tool_timeout_s: float = 10.0
     catalog_timeout_ms: int = 2000
