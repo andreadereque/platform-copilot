@@ -8,7 +8,7 @@ help: ## List the available commands
 
 install: ## Install backend and frontend dependencies
 	cd backend && uv sync
-	cd frontend && npm ci
+	cd frontend && npx -y npm@11 ci
 
 db: ## (Re)create the local database and schema. Deletes all its data
 	$(PSQL) -d postgres -c "DROP DATABASE IF EXISTS $(DB) WITH (FORCE)" -c "CREATE DATABASE $(DB)"
