@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from platform_copilot.api import health
+from platform_copilot.api import access_requests, health
 from platform_copilot.config import Settings, get_settings
 from platform_copilot.db import make_pool
 
@@ -25,4 +25,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.pool = pool
     app.include_router(health.router)
+    app.include_router(access_requests.router)
     return app
