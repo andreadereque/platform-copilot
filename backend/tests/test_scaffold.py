@@ -85,4 +85,4 @@ async def test_seed_script_loads_the_configured_database(
 
     monkeypatch.setattr(seed, "get_settings", lambda: settings)
     await seed.main()
-    assert "Loaded 40 data products" in capsys.readouterr().out
+    assert "Loaded 40 data products and" in capsys.readouterr().out
