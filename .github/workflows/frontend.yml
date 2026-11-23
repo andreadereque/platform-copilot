@@ -1,0 +1,31 @@
+name: frontend
+on:
+  pull_request:
+    paths: ["frontend/**", ".github/workflows/frontend.yml"]
+  push:
+    branches: [main]
+    paths: ["frontend/**", ".github/workflows/frontend.yml"]
+permissions:
+  contents: read
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: true
+defaults:
+  run:
+    working-directory: frontend
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npx -y npm@11 ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - name: Tests (100% coverage)
+        run: npm test
+      - run: npm run build
