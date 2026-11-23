@@ -1,4 +1,4 @@
-"""Load the fake users and data products. Documents are ingested by `platform_copilot.rag.ingest`.
+"""Load the fake users, data products and documents (the documents are embedded).
 
 Usage: `uv run python -m platform_copilot.seed`
 """
@@ -11,6 +11,8 @@ from pathlib import Path
 import psycopg
 
 from platform_copilot.config import get_settings
+from platform_copilot.embeddings import build_embedder
+from platform_copilot.rag.ingest import ingest_docs
 
 SEED_DIR = Path(__file__).resolve().parents[3] / "seed"
 
@@ -48,7 +50,8 @@ async def main() -> None:
     settings = get_settings()
     async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
         count = await load_users_and_products(conn, SEED_DIR)
-    print(f"Loaded {count} data products")
+        chunks = await ingest_docs(conn, SEED_DIR / "docs", build_embedder(settings))
+    print(f"Loaded {count} data products and {chunks} chunks")
 
 
 if __name__ == "__main__":
