@@ -15,15 +15,15 @@ def test_healthz_never_checks_dependencies(client: TestClient) -> None:
 def test_readyz_reports_the_database(client: TestClient) -> None:
     response = client.get("/readyz")
     assert response.status_code == 200
-    assert response.json() == {"database": True}
+    assert response.json() == {"database": True, "llm": True}
 
 
 def test_readyz_is_503_when_the_database_is_down() -> None:
-    settings = Settings(database_url="postgresql://localhost:1/nothing")
+    settings = Settings(database_url="postgresql://localhost:1/nothing", llm_provider="fake")
     with TestClient(create_app(settings)) as client:
         response = client.get("/readyz")
     assert response.status_code == 503
-    assert response.json() == {"database": False}
+    assert response.json()["database"] is False
 
 
 async def test_seed_loads_users_and_products(conn: Conn) -> None:

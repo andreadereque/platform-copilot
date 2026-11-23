@@ -18,8 +18,9 @@ async def healthz() -> dict[str, str]:
 
 @router.get("/readyz")
 async def readyz(request: Request, response: Response) -> dict[str, bool]:
-    """Readiness: only send traffic when the database answers."""
+    """Readiness: only send traffic when the database answers. The LLM is reported, not required:
+    without it the chat fails, but approvals and the audit log still work."""
     db_ok = await is_db_ready(request.app.state.pool)
     if not db_ok:
         response.status_code = 503
-    return {"database": db_ok}
+    return {"database": db_ok, "llm": await request.app.state.llm.is_ready()}
