@@ -1,0 +1,7 @@
+[
+  {"id": "laura@sales", "name": "Laura Gil", "groups": ["sales", "public"]},
+  {"id": "marta@finance", "name": "Marta Ruiz", "groups": ["finance", "public"]},
+  {"id": "dev@platform", "name": "Dani Vidal", "groups": ["platform", "public"]},
+  {"id": "ana@hr", "name": "Ana Soler", "groups": ["hr", "public"]},
+  {"id": "guest", "name": "Invitado", "groups": ["public"]}
+]

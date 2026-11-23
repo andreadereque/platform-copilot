@@ -1,0 +1,41 @@
+name,domain,country,owner,description,pii
+sales_es_monthly,sales,ES,marta@finance,Ventas mensuales por producto y región en España,true
+sales_fr_monthly,sales,FR,marta@finance,Ventas mensuales por producto y región en Francia,true
+sales_de_monthly,sales,DE,marta@finance,Ventas mensuales por producto y región en Alemania,true
+sales_it_weekly,sales,IT,laura@sales,Ventas semanales agregadas en Italia,false
+sales_es_weekly,sales,ES,laura@sales,Ventas semanales agregadas en España,false
+sales_pipeline_eu,sales,EU,laura@sales,Oportunidades comerciales abiertas en Europa,false
+sales_targets_2026,sales,EU,laura@sales,Objetivos comerciales por país para 2026,false
+sales_returns_es,sales,ES,laura@sales,Devoluciones de producto en España,false
+customers_es,sales,ES,laura@sales,Clientes institucionales en España con contacto,true
+customers_fr,sales,FR,laura@sales,Clientes institucionales en Francia con contacto,true
+pricing_list_eu,sales,EU,marta@finance,Lista de precios vigente por país,false
+finance_gl_eu,finance,EU,marta@finance,Libro mayor contable consolidado de Europa,false
+finance_invoices_es,finance,ES,marta@finance,Facturas emitidas en España,true
+finance_invoices_fr,finance,FR,marta@finance,Facturas emitidas en Francia,true
+finance_budget_2026,finance,EU,marta@finance,Presupuesto anual por departamento,false
+finance_fx_rates,finance,GLOBAL,marta@finance,Tipos de cambio diarios,false
+finance_costs_monthly,finance,EU,marta@finance,Costes mensuales por centro de coste,false
+finance_payments_es,finance,ES,marta@finance,Pagos a proveedores en España,true
+hr_headcount_eu,hr,EU,ana@hr,Plantilla por país y departamento,false
+hr_employees_es,hr,ES,ana@hr,Ficha de empleados en España,true
+hr_salaries_es,hr,ES,ana@hr,Salarios por empleado en España,true
+hr_training_hours,hr,EU,ana@hr,Horas de formación por equipo,false
+hr_absences_es,hr,ES,ana@hr,Ausencias y bajas en España,true
+hr_open_positions,hr,EU,ana@hr,Vacantes abiertas por equipo,false
+supply_inventory_eu,supply,EU,dev@platform,Inventario diario por almacén,false
+supply_shipments_es,supply,ES,dev@platform,Envíos a farmacias y hospitales en España,false
+supply_shipments_fr,supply,FR,dev@platform,Envíos a farmacias y hospitales en Francia,false
+supply_suppliers,supply,GLOBAL,dev@platform,Proveedores homologados,false
+supply_stockouts_eu,supply,EU,dev@platform,Roturas de stock por producto,false
+platform_usage_daily,platform,GLOBAL,dev@platform,Uso diario de la plataforma por equipo,false
+platform_costs_cloud,platform,GLOBAL,dev@platform,Coste cloud por equipo y servicio,false
+platform_incidents,platform,GLOBAL,dev@platform,Incidencias de la plataforma y su resolución,false
+platform_pipeline_runs,platform,GLOBAL,dev@platform,Ejecuciones de pipelines y su estado,false
+platform_access_log,platform,GLOBAL,dev@platform,Accesos a data products por usuario,true
+marketing_campaigns_eu,marketing,EU,laura@sales,Campañas de marketing y su inversión,false
+marketing_web_visits,marketing,GLOBAL,laura@sales,Visitas a la web por país,false
+marketing_events_es,marketing,ES,laura@sales,Eventos médicos en España y asistentes,true
+quality_deviations,quality,GLOBAL,dev@platform,Desviaciones de calidad en fabricación,false
+quality_batches_eu,quality,EU,dev@platform,Lotes fabricados y su liberación,false
+quality_audits_2026,quality,GLOBAL,dev@platform,Auditorías de calidad planificadas,false
