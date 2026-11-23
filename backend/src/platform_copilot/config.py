@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     claude_model: str = "claude-opus-5-5"
     claude_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     max_steps: int = 5
+    prefetch_docs: bool = True  # search the docs with the question before the first step
     tool_timeout_s: float = 10.0
     catalog_timeout_ms: int = 2000
     catalog_row_limit: int = 50
