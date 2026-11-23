@@ -1,0 +1,62 @@
+name: evals
+# Runs the real model on the 25 golden cases. Only when something that changes behaviour changes.
+on:
+  pull_request:
+    paths:
+      - "backend/src/platform_copilot/agent.py"
+      - "backend/src/platform_copilot/tools/**"
+      - "backend/src/platform_copilot/rag/**"
+      - "backend/src/platform_copilot/llm/**"
+      - "seed/**"
+      - "evals/**"
+      - ".github/workflows/evals.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: platform_copilot
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/platform_copilot
+      LLM_MODEL: qwen2.5:7b
+      EVAL_JUDGE_MODEL: qwen2.5:7b
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install and start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve > /tmp/ollama.log 2>&1 &
+          sleep 5
+      - name: Cache models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-qwen2.5-7b-nomic
+      - run: ollama pull qwen2.5:7b && ollama pull nomic-embed-text
+      - name: Schema and seed
+        run: |
+          psql "$DATABASE_URL" -f db/init.sql
+          cd backend && uv sync --locked && uv run python -m platform_copilot.seed
+      - name: Evals (fail below thresholds)
+        run: cd backend && uv run python ../evals/run.py
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: evals/results/
