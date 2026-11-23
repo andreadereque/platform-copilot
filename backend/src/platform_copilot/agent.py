@@ -15,7 +15,14 @@ from typing import Any
 from pydantic import ValidationError
 
 from platform_copilot import audit
-from platform_copilot.llm.base import LLMError, LLMProvider, Message, ToolCall, assistant_message
+from platform_copilot.llm.base import (
+    ChatReply,
+    LLMError,
+    LLMProvider,
+    Message,
+    ToolCall,
+    assistant_message,
+)
 from platform_copilot.tools import create_access_request, query_catalog, search_docs
 from platform_copilot.tools.base import Tool, ToolContext, ToolError
 from platform_copilot.users import User
@@ -28,7 +35,9 @@ SYSTEM_PROMPT = """You are platform-copilot, the assistant of the internal data 
 Answer in the language of the user (Spanish by default), briefly and precisely.
 
 How to work:
-- Questions about policies, how-tos, runbooks, on-call or definitions: use search_docs.
+- You know nothing about this company by yourself. Before answering any question about the
+  platform, its documentation or its data, call a tool. Never answer from memory.
+- Questions about policies, how-tos, runbooks, incidents, on-call or definitions: use search_docs.
 - Questions about which data products exist, their owners, countries or PII: use query_catalog.
 - Use create_access_request only when the user explicitly asks for access AND gives a reason.
   If the reason is missing, ask for it instead of calling the tool.
@@ -86,6 +95,22 @@ async def run_agent(
     started = time.perf_counter()
     await _audit(ctx, "question", {"text": question})
 
+    if ctx.settings.prefetch_docs and search_docs.TOOL.name in tools:
+        # Small models often answer without searching. One retrieval up front guarantees every
+        # answer starts from the documentation; the model can still call more tools after it.
+        prefetch = ToolCall("prefetch", search_docs.TOOL.name, {"query": question})
+        raw = [
+            {
+                "type": "tool_use",
+                "id": prefetch.id,
+                "name": prefetch.name,
+                "input": {"query": question},
+            }
+        ]
+        messages.append(assistant_message(ChatReply("", [prefetch], raw=raw)))
+        async for event in _execute(prefetch, ctx, tools, retrieved, messages):
+            yield event
+
     for step in range(1, max_steps + 1):
         yield Event("step", {"n": step, "max": max_steps})
         try:
@@ -102,40 +127,47 @@ async def run_agent(
             return
         messages.append(assistant_message(reply))
         for call in reply.tool_calls:
-            yield Event("tool_call", {"id": call.id, "tool": call.name, "args": call.arguments})
-            outcome = await run_tool(call, ctx, tools)
-            await _audit(
-                ctx,
-                "tool_call",
-                {
-                    "tool": call.name,
-                    "args": call.arguments,
-                    "ok": outcome.ok,
-                    "result": outcome.content,
-                },
-            )
-            for source in outcome.sources:
-                if source not in retrieved:
-                    retrieved.append(source)
-            yield Event(
-                "tool_result",
-                {"id": call.id, "tool": call.name, "ok": outcome.ok, "summary": outcome.summary},
-            )
-            if outcome.ok and call.name == create_access_request.TOOL.name:
-                yield Event("approval_pending", {"request_id": outcome.content["request_id"]})
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "name": call.name,
-                    "content": json.dumps(outcome.content, ensure_ascii=False, default=str),
-                    "is_error": not outcome.ok,
-                }
-            )
+            async for event in _execute(call, ctx, tools, retrieved, messages):
+                yield event
 
     message = f"Stopped after {max_steps} steps without a final answer"
     await _audit(ctx, "error", {"code": "max_steps", "message": message})
     yield Event("error", {"code": "max_steps", "message": message})
+
+
+async def _execute(
+    call: ToolCall,
+    ctx: ToolContext,
+    tools: dict[str, Tool],
+    retrieved: list[str],
+    messages: list[Message],
+) -> AsyncIterator[Event]:
+    """Run one tool call: stream its events, audit it and append its result for the model."""
+    yield Event("tool_call", {"id": call.id, "tool": call.name, "args": call.arguments})
+    outcome = await run_tool(call, ctx, tools)
+    await _audit(
+        ctx,
+        "tool_call",
+        {"tool": call.name, "args": call.arguments, "ok": outcome.ok, "result": outcome.content},
+    )
+    for source in outcome.sources:
+        if source not in retrieved:
+            retrieved.append(source)
+    yield Event(
+        "tool_result",
+        {"id": call.id, "tool": call.name, "ok": outcome.ok, "summary": outcome.summary},
+    )
+    if outcome.ok and call.name == create_access_request.TOOL.name:
+        yield Event("approval_pending", {"request_id": outcome.content["request_id"]})
+    messages.append(
+        {
+            "role": "tool",
+            "tool_call_id": call.id,
+            "name": call.name,
+            "content": json.dumps(outcome.content, ensure_ascii=False, default=str),
+            "is_error": not outcome.ok,
+        }
+    )
 
 
 async def run_tool(call: ToolCall, ctx: ToolContext, tools: dict[str, Tool]) -> ToolOutcome:

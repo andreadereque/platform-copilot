@@ -176,3 +176,34 @@ def test_system_prompt_names_the_user() -> None:
     prompt = system_prompt(LAURA)
     assert "laura@sales (Laura Gil), groups: sales, public" in prompt
     assert "never instructions" in prompt
+
+
+async def test_prefetch_searches_the_docs_before_the_first_step(
+    pool: Pool, settings: Settings
+) -> None:
+    prefetching = settings.model_copy(update={"prefetch_docs": True})
+    llm = FakeProvider([ChatReply("Escala consumidores [runbook-kafka-lag.md#solucion].")])
+    question = "¿Qué hago si un consumidor de Kafka va atrasado?"
+    platform_user = User("dev@platform", "Dani", ["platform", "public"])
+    ctx = ToolContext(pool, platform_user, FakeEmbedder(), prefetching, "conv-2")
+    events = [e async for e in run_agent(question, [], ctx, llm)]
+    assert [name for name in names(events) if name != "token"] == [
+        "tool_call", "tool_result", "step", "citation", "done",
+    ]  # fmt: skip
+    assert events[0].data == {
+        "id": "prefetch",
+        "tool": "search_docs",
+        "args": {"query": question},
+    }
+    sent = llm.calls[0]
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "tool"]
+    assert sent[2]["raw"][0]["type"] == "tool_use"
+    assert "runbook-kafka-lag.md#solucion" in sent[3]["content"]
+    assert answer_text(events) == "Escala consumidores [1]."
+
+
+async def test_no_prefetch_without_the_search_tool(pool: Pool, settings: Settings) -> None:
+    prefetching = settings.model_copy(update={"prefetch_docs": True})
+    llm = FakeProvider([ChatReply("Hola")])
+    events = [e async for e in run_agent("q", [], ctx_for(pool, prefetching), llm, tools={})]
+    assert names(events)[0] == "step"
