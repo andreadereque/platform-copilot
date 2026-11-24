@@ -8,14 +8,15 @@ from platform_copilot import audit
 from platform_copilot.access import AccessError, AccessRequest, Decision, decide, requests_for_owner
 from platform_copilot.api.deps import PoolDep, UserDep
 from platform_copilot.pagination import InvalidCursorError, Page
-from platform_copilot.users import User, list_users
+from platform_copilot.users import User
 
 router = APIRouter(prefix="/api")
 
 
-@router.get("/users")
-async def users(pool: PoolDep) -> list[User]:
-    return await list_users(pool)
+@router.get("/me")
+async def me(user: UserDep) -> User:
+    """The logged-in user, as the API sees it from the token."""
+    return user
 
 
 @router.get("/access-requests")

@@ -1,0 +1,162 @@
+{
+  "realm": "platform-copilot",
+  "enabled": true,
+  "accessTokenLifespan": 300,
+  "groups": [
+    {
+      "name": "finance"
+    },
+    {
+      "name": "hr"
+    },
+    {
+      "name": "platform"
+    },
+    {
+      "name": "public"
+    },
+    {
+      "name": "sales"
+    }
+  ],
+  "users": [
+    {
+      "username": "laura@sales",
+      "enabled": true,
+      "firstName": "Laura",
+      "lastName": "Gil",
+      "email": "laura.sales@example.com",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "copilot",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/sales",
+        "/public"
+      ]
+    },
+    {
+      "username": "marta@finance",
+      "enabled": true,
+      "firstName": "Marta",
+      "lastName": "Ruiz",
+      "email": "marta.finance@example.com",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "copilot",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/finance",
+        "/public"
+      ]
+    },
+    {
+      "username": "dev@platform",
+      "enabled": true,
+      "firstName": "Dani",
+      "lastName": "Vidal",
+      "email": "dev.platform@example.com",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "copilot",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/platform",
+        "/public"
+      ]
+    },
+    {
+      "username": "ana@hr",
+      "enabled": true,
+      "firstName": "Ana",
+      "lastName": "Soler",
+      "email": "ana.hr@example.com",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "copilot",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/hr",
+        "/public"
+      ]
+    },
+    {
+      "username": "guest",
+      "enabled": true,
+      "firstName": "Invitado",
+      "lastName": "Demo",
+      "email": "guest.demo@example.com",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "copilot",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/public"
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "platform-copilot-web",
+      "name": "platform-copilot UI",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:5173/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5173"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:5173/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "api audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "platform-copilot-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ]
+}

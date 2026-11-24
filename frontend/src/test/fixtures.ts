@@ -1,9 +1,42 @@
+import { vi } from "vitest";
 import type { AccessRequest, User } from "../api/schemas";
+import type { Auth, Session } from "../auth/oidc";
 
 export const users: User[] = [
   { id: "laura@sales", name: "Laura Gil", groups: ["sales", "public"] },
   { id: "marta@finance", name: "Marta Ruiz", groups: ["finance", "public"] },
 ];
+
+/** In the tests the access token is just "token-<user id>"; MSW handlers read it back. */
+export function sessionFor(user: User): Session {
+  return { token: `token-${user.id}`, user };
+}
+
+export function userFromAuthorization(request: Request): string {
+  return (request.headers.get("Authorization") ?? "").replace(
+    "Bearer token-",
+    "",
+  );
+}
+
+/** An Auth that never redirects: restore() resolves with the given session. */
+export function fakeAuth(
+  session: Session | null,
+  overrides: Partial<Auth> = {},
+) {
+  const renewed: Array<(session: Session) => void> = [];
+  const auth = {
+    restore: vi.fn(() => Promise.resolve(session)),
+    login: vi.fn(() => Promise.resolve()),
+    logout: vi.fn(() => Promise.resolve()),
+    onRenewed: vi.fn((listener: (session: Session) => void) => {
+      renewed.push(listener);
+      return () => {};
+    }),
+    ...overrides,
+  };
+  return { auth, renew: (next: Session) => renewed.forEach((l) => l(next)) };
+}
 
 export const pendingRequest: AccessRequest = {
   id: 42,

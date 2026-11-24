@@ -3,11 +3,9 @@ import {
   accessRequestSchema,
   chatEventSchema,
   requestsPageSchema,
-  userSchema,
   type AccessRequest,
   type ChatEvent,
   type RequestsPage,
-  type User,
 } from "./schemas";
 import { splitSse } from "./sse";
 
@@ -46,16 +44,13 @@ async function request<T>(
 
 export const REQUESTS_PAGE_SIZE = 10;
 
-function asUser(userId: string): HeadersInit {
-  return { "X-User-Id": userId };
-}
-
-export function fetchUsers(): Promise<User[]> {
-  return request("/api/users", z.array(userSchema));
+/** The OIDC access token goes in every request; the API validates it (RS256, iss, aud, exp). */
+function bearer(token: string): HeadersInit {
+  return { Authorization: `Bearer ${token}` };
 }
 
 export function fetchRequests(
-  userId: string,
+  token: string,
   cursor: string | null,
 ): Promise<RequestsPage> {
   const params = new URLSearchParams({ limit: String(REQUESTS_PAGE_SIZE) });
@@ -63,12 +58,12 @@ export function fetchRequests(
     params.set("cursor", cursor);
   }
   return request(`/api/access-requests?${params}`, requestsPageSchema, {
-    headers: asUser(userId),
+    headers: bearer(token),
   });
 }
 
 export function decideRequest(
-  userId: string,
+  token: string,
   requestId: number,
   decision: "approve" | "reject",
 ): Promise<AccessRequest> {
@@ -77,7 +72,7 @@ export function decideRequest(
     accessRequestSchema,
     {
       method: "POST",
-      headers: asUser(userId),
+      headers: bearer(token),
     },
   );
 }
@@ -85,7 +80,7 @@ export function decideRequest(
 export type HistoryTurn = { role: "user" | "assistant"; content: string };
 
 export type ChatRequest = {
-  userId: string;
+  token: string;
   message: string;
   history: HistoryTurn[];
   conversationId: string;
@@ -96,7 +91,7 @@ export type ChatRequest = {
 export async function streamChat(req: ChatRequest): Promise<void> {
   const response = await fetch("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...asUser(req.userId) },
+    headers: { "Content-Type": "application/json", ...bearer(req.token) },
     body: JSON.stringify({
       message: req.message,
       history: req.history,

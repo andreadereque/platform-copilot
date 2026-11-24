@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     catalog_timeout_ms: int = 2000
     catalog_row_limit: int = 50
     log_level: str = "INFO"
+    # OIDC: the API accepts access tokens issued by this realm for this audience.
+    oidc_issuer: str = "http://localhost:8080/realms/platform-copilot"
+    oidc_audience: str = "platform-copilot-api"
+    oidc_jwks_url: str = ""  # empty: Keycloak's default, <issuer>/protocol/openid-connect/certs
 
 
 @lru_cache

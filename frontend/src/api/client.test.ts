@@ -1,35 +1,27 @@
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
-import { journey, pendingRequest, sseStream, users } from "../test/fixtures";
+import { journey, pendingRequest, sseStream } from "../test/fixtures";
 import { server } from "../test/server";
-import {
-  ApiError,
-  decideRequest,
-  fetchRequests,
-  fetchUsers,
-  streamChat,
-} from "./client";
+import { ApiError, decideRequest, fetchRequests, streamChat } from "./client";
 import type { ChatEvent } from "./schemas";
 
 describe("api client", () => {
-  it("loads users and pages of requests with the user header", async () => {
+  it("loads pages of requests with the bearer token", async () => {
     let header = "";
     const urls: string[] = [];
     server.use(
-      http.get("/api/users", () => HttpResponse.json(users)),
       http.get("/api/access-requests", ({ request }) => {
-        header = request.headers.get("X-User-Id") ?? "";
+        header = request.headers.get("Authorization") ?? "";
         urls.push(new URL(request.url).search);
         return HttpResponse.json({ items: [pendingRequest], next_cursor: "n" });
       }),
     );
-    expect(await fetchUsers()).toEqual(users);
-    expect(await fetchRequests("marta@finance", null)).toEqual({
+    expect(await fetchRequests("jwt-marta", null)).toEqual({
       items: [pendingRequest],
       next_cursor: "n",
     });
-    await fetchRequests("marta@finance", "abc");
-    expect(header).toBe("marta@finance");
+    await fetchRequests("jwt-marta", "abc");
+    expect(header).toBe("Bearer jwt-marta");
     expect(urls).toEqual(["?limit=10", "?limit=10&cursor=abc"]);
   });
 
@@ -49,10 +41,10 @@ describe("api client", () => {
         ),
       ),
     );
-    expect((await decideRequest("marta@finance", 42, "approve")).status).toBe(
+    expect((await decideRequest("jwt-marta", 42, "approve")).status).toBe(
       "approved",
     );
-    const error = await decideRequest("laura@sales", 42, "reject").catch(
+    const error = await decideRequest("jwt-laura", 42, "reject").catch(
       (e: unknown) => e,
     );
     expect(error).toBeInstanceOf(ApiError);
@@ -64,18 +56,21 @@ describe("api client", () => {
 
   it("falls back to the status when the error body is not JSON", async () => {
     server.use(
-      http.get("/api/users", () => new HttpResponse("boom", { status: 502 })),
+      http.get(
+        "/api/access-requests",
+        () => new HttpResponse("boom", { status: 502 }),
+      ),
     );
-    await expect(fetchUsers()).rejects.toThrow("HTTP 502");
+    await expect(fetchRequests("t", null)).rejects.toThrow("HTTP 502");
   });
 
   it("falls back to the status when the error JSON has no detail", async () => {
     server.use(
-      http.get("/api/users", () =>
+      http.get("/api/access-requests", () =>
         HttpResponse.json({ nope: 1 }, { status: 500 }),
       ),
     );
-    await expect(fetchUsers()).rejects.toThrow("HTTP 500");
+    await expect(fetchRequests("t", null)).rejects.toThrow("HTTP 500");
   });
 
   it("streams chat events in order, even when a chunk cuts an event in half", async () => {
@@ -90,7 +85,7 @@ describe("api client", () => {
     );
     const events: ChatEvent[] = [];
     await streamChat({
-      userId: "laura@sales",
+      token: "jwt-laura",
       message: "hola",
       history: [{ role: "user", content: "antes" }],
       conversationId: "",
@@ -107,17 +102,17 @@ describe("api client", () => {
   it("rejects when the chat request fails", async () => {
     server.use(
       http.post("/api/chat", () =>
-        HttpResponse.json({ detail: "Unknown user x" }, { status: 401 }),
+        HttpResponse.json({ detail: "Invalid token" }, { status: 401 }),
       ),
     );
     await expect(
       streamChat({
-        userId: "x",
+        token: "expired",
         message: "hola",
         history: [],
         conversationId: "c",
         onEvent: () => {},
       }),
-    ).rejects.toThrow("Unknown user x");
+    ).rejects.toThrow("Invalid token");
   });
 });

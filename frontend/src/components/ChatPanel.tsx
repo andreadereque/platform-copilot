@@ -1,6 +1,6 @@
 import { useReducer, useState, type FormEvent } from "react";
 import { streamChat } from "../api/client";
-import type { User } from "../api/schemas";
+import type { Session } from "../auth/oidc";
 import { chatReducer, initialChat, toHistory } from "../chat/reducer";
 import { AssistantMessage } from "./AssistantMessage";
 
@@ -10,9 +10,9 @@ const EXAMPLES = [
   "¿Qué data products de finanzas tienen datos personales?",
 ];
 
-type Props = { user: User; onApprovalPending: () => void };
+type Props = { session: Session; onApprovalPending: () => void };
 
-export function ChatPanel({ user, onApprovalPending }: Props) {
+export function ChatPanel({ session, onApprovalPending }: Props) {
   const [state, dispatch] = useReducer(chatReducer, initialChat);
   const [draft, setDraft] = useState("");
 
@@ -25,7 +25,7 @@ export function ChatPanel({ user, onApprovalPending }: Props) {
     setDraft("");
     try {
       await streamChat({
-        userId: user.id,
+        token: session.token,
         message: question,
         history,
         conversationId: state.conversationId,

@@ -1,4 +1,4 @@
-.PHONY: help install db seed dev dev-backend dev-frontend test test-backend test-frontend lint eval ollama-setup
+.PHONY: help install db seed realm keycloak dev dev-backend dev-frontend test test-backend test-frontend lint eval ollama-setup
 
 PSQL ?= /opt/homebrew/opt/postgresql@18/bin/psql
 DB   ?= platform_copilot
@@ -16,6 +16,12 @@ db: ## (Re)create the local database and schema. Deletes all its data
 
 seed: ## Load fake users, data products and documents (embeds the docs with Ollama)
 	cd backend && uv run python -m platform_copilot.seed
+
+realm: ## Regenerate keycloak/platform-copilot-realm.json from seed/users.json
+	cd backend && uv run python -m platform_copilot.keycloak_realm
+
+keycloak: ## Run Keycloak on :8080 with the realm imported (Docker); users log in with password "copilot"
+	docker compose up -d keycloak
 
 dev: ## Run backend (:8000) and frontend (:5173) together
 	$(MAKE) -j2 dev-backend dev-frontend
