@@ -66,6 +66,18 @@ CREATE TABLE audit_log (
     payload         jsonb NOT NULL
 );
 CREATE INDEX audit_log_ts_idx ON audit_log (ts DESC, id DESC);  -- keyset pagination
+CREATE INDEX audit_log_kind_ts_idx ON audit_log (kind, ts);       -- monitoring windows
+
+-- Thumbs up / down on an answer. Negative ones become candidate eval cases after review.
+CREATE TABLE feedback (
+    id              bigserial PRIMARY KEY,
+    conversation_id text NOT NULL,
+    user_id         text NOT NULL REFERENCES users,
+    rating          smallint NOT NULL CHECK (rating IN (-1, 1)),
+    comment         text NOT NULL DEFAULT '',
+    created_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX feedback_created_idx ON feedback (created_at);
 
 CREATE FUNCTION audit_log_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

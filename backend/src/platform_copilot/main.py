@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from platform_copilot.api import access_requests, chat, health
+from platform_copilot.api import access_requests, chat, health, ops
 from platform_copilot.auth import JwksCache, OidcConfig, TokenValidator
 from platform_copilot.config import Settings, get_settings
 from platform_copilot.db import make_pool
@@ -56,4 +56,5 @@ def create_app(
     app.include_router(health.router)
     app.include_router(access_requests.router)
     app.include_router(chat.router)
+    app.include_router(ops.router)
     return app

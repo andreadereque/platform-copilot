@@ -271,3 +271,8 @@ sup {
   flex-direction: column;
   gap: 14px;
 }
+.feedback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

@@ -24,7 +24,7 @@ from platform_copilot.seed import SEED_DIR, load_users_and_products
 ROOT = Path(__file__).resolve().parents[2]
 TEST_DB_URL = os.environ.get("TEST_DATABASE_URL", "postgresql://localhost/platform_copilot_test")
 ADMIN_URL = os.environ.get("TEST_ADMIN_URL", "postgresql://localhost/postgres")
-TABLES = "audit_log, access_requests, chunks, documents, data_products, users"
+TABLES = "feedback, audit_log, access_requests, chunks, documents, data_products, users"
 
 
 EXPORTER = InMemorySpanExporter()

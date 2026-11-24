@@ -1,14 +1,32 @@
 import { useReducer, useState, type FormEvent } from "react";
 import { streamChat } from "../api/client";
 import type { Session } from "../auth/oidc";
-import { chatReducer, initialChat, toHistory } from "../chat/reducer";
+import {
+  chatReducer,
+  initialChat,
+  toHistory,
+  type ChatState,
+} from "../chat/reducer";
 import { AssistantMessage } from "./AssistantMessage";
+import { FeedbackButtons } from "./FeedbackButtons";
 
 const EXAMPLES = [
   "¿Quién es el dueño de sales_es_monthly? Pídeme acceso para el informe trimestral",
   "¿Qué hago si un consumidor de Kafka va atrasado?",
   "¿Qué data products de finanzas tienen datos personales?",
 ];
+
+/** Only a finished, successful answer can be rated. */
+function canRate(state: ChatState): boolean {
+  const last = state.turns.at(-1);
+  return Boolean(
+    last &&
+    last.role === "assistant" &&
+    !last.streaming &&
+    !last.error &&
+    state.conversationId,
+  );
+}
 
 type Props = { session: Session; onApprovalPending: () => void };
 
@@ -80,6 +98,13 @@ export function ChatPanel({ session, onApprovalPending }: Props) {
           }
           return <AssistantMessage key={index} turn={turn} />;
         })}
+        {canRate(state) && (
+          <FeedbackButtons
+            key={state.turns.length}
+            token={session.token}
+            conversationId={state.conversationId}
+          />
+        )}
       </div>
       <form className="input" onSubmit={submit}>
         <input

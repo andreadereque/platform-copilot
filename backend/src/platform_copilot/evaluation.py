@@ -94,3 +94,23 @@ def render_markdown(model: str, metrics: dict[str, float | None], results: list[
         notes = "; ".join(r.notes)
         lines.append(f"| {r.id} | " + " | ".join(_cell(c) for c in cells) + f" | {notes} |")
     return "\n".join(lines) + "\n"
+
+
+def cohen_kappa(judge: list[bool], human: list[bool]) -> float | None:
+    """Agreement between the LLM judge and human labels, corrected for chance.
+
+    Raw agreement flatters a judge that says "faithful" to almost everything when most answers
+    are faithful. Kappa asks how much better than chance it agrees: 1 perfect, 0 chance level.
+    Trust the judge's metric in CI only when kappa on a labelled sample is high (> 0.6 or so);
+    otherwise improve the judge prompt or model first."""
+    if len(judge) != len(human):
+        raise ValueError("judge and human labels must have the same length")
+    if not judge:
+        return None
+    n = len(judge)
+    observed = sum(j == h for j, h in zip(judge, human, strict=True)) / n
+    p_judge, p_human = sum(judge) / n, sum(human) / n
+    expected = p_judge * p_human + (1 - p_judge) * (1 - p_human)
+    if expected == 1:
+        return 1.0  # both always gave the same single label: nothing to correct for
+    return round((observed - expected) / (1 - expected), 4)
