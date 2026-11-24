@@ -14,6 +14,14 @@ the code that implements it.
 - [8. How it is tested (pytest)](#8-how-it-is-tested-pytest)
 - [9. How it would scale](#9-how-it-would-scale)
 - [10. Quick answers](#10-quick-answers)
+- Part 2, AI engineering in production:
+  [11. Two agent engines: own loop and LangGraph](#11-two-agent-engines-own-loop-and-langgraph) ·
+  [12. Context engineering](#12-context-engineering) ·
+  [13. Observability: traces, latency, cost](#13-observability-traces-latency-cost) ·
+  [14. Evaluation and the production feedback loop](#14-evaluation-and-the-production-feedback-loop) ·
+  [15. Monitoring and drift](#15-monitoring-and-drift) ·
+  [16. Safety nets and security](#16-safety-nets-and-security) ·
+  [17. Deploying on GCP](#17-deploying-on-gcp)
 
 ## 1. The system in one minute
 
@@ -357,3 +365,133 @@ what matters is that every query uses an index and returns a page, not the table
 | psycopg vs asyncpg? | Both async; asyncpg is faster with its own API, psycopg 3 has one API for sync and async and better ecosystem support. Here the LLM dominates latency |
 | How do you test async code? | pytest-asyncio, a real database in fixtures, fakes at the boundaries (LLM, HTTP, clock), dependency injection into the app factory |
 | 429 or 503? | 429: *this client* is sending too much (with `Retry-After`). 503: *the server* cannot serve now |
+
+---
+
+# Part 2 · AI engineering in production
+
+## 11. Two agent engines: own loop and LangGraph
+
+The same three tools and the same versioned prompt run in two engines:
+
+| | `agent.py` (own loop) | `agent_graph.py` (LangGraph) |
+|---|---|---|
+| Shape | A `for` loop, max N steps, an async generator of events | A `StateGraph`: nodes `model`, `tools`, `confirm`, `finish`, `give_up` |
+| State | Local variables | `TypedDict` with **reducers** (`operator.add`: nodes append messages) |
+| Writes | Created as *pending*; the owner approves later | `interrupt()` before any write: the **user confirms** first, then `Command(resume=…)` |
+| Memory | History sent by the client | A **checkpointer** per `thread_id` (in memory here, `PostgresSaver` in production) |
+| Streaming | Native (SSE per event) | `astream` modes (not wired to the UI) |
+| Best for | Simple, linear tool use; full control; easy to read | Branching flows, human-in-the-loop pauses, long-running and resumable agents |
+
+**When a single call, when an agent.** A single model call with structured output when the
+task is well defined (classify, extract, map a field). A workflow (fixed steps, code decides)
+when the steps are known. An agent (the model decides the next step) only when the path
+depends on intermediate results. Agents cost more tokens, add latency and are harder to
+evaluate, so each level of autonomy has to earn its place, measured with evals.
+
+Google ADK takes the same ideas (agents, tools, sessions, callbacks) with Gemini and Vertex AI
+first; the tools here are plain async functions with Pydantic arguments, so they move between
+frameworks (or behind an MCP server) without changes.
+
+Tests (`test_agent_graph.py`): read-only tools run without asking, a write pauses and runs
+only after approval, a declined write never touches the database, the checkpointer keeps one
+memory per thread, and the step limit stops loops.
+
+## 12. Context engineering
+
+Everything the model sees is treated like code (`prompts.py`, `context.py`):
+
+- **Versioned prompts.** `prompts/system.v1.md` is the system prompt; `prompts.lock.json`
+  pins each version's SHA-256. A test fails if a released prompt changes: a change is a new
+  file (`system.v2.md`). The version to run is a setting, so v1 and v2 go through the same
+  eval suite before switching, and a rollback is a config change.
+- **Traceability.** The prompt version is stored with every question in the audit log and on
+  the trace (`prompt.version`). Any answer can be traced to the prompt that produced it.
+- **Context budget.** History is trimmed to a token budget, dropping the oldest turns first;
+  tool results are clipped with a visible "truncated" marker. Retrieval returns top-k chunks
+  with their source ids, filtered by the user's groups in SQL.
+- **Evals on change.** The evals workflow runs whenever the agent, the tools, the prompts or
+  the context code change.
+
+## 13. Observability: traces, latency, cost
+
+OpenTelemetry (`observability.py`): one `agent.run` span per question, parent of one
+`llm.chat` span per model call and one `tool <name>` span per tool call.
+
+- `llm.chat`: `gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`,
+  `gen_ai.usage.output_tokens`, number of tool calls asked, `latency_ms`, `cost_usd`, error
+  status. Attribute names follow the OpenTelemetry **GenAI semantic conventions**, so Cloud
+  Trace, Grafana or Langfuse understand them.
+- `tool …`: ok/failed, latency. `agent.run`: user, conversation, prompt version, steps,
+  tokens, total cost, outcome (`answered`, `llm_error`, `max_steps`), injection flag.
+- **Decorator, not changes everywhere:** `TracedProvider` wraps any provider; the agent and the
+  providers do not know they are traced.
+- Cost = tokens × price, with prices in settings (they change and depend on the contract).
+  Latency, tokens and cost also go to the `done` event and the audit log, which is what the
+  monitoring report reads.
+
+Tests use an in-memory span exporter and check the parent/child structure and the numbers.
+
+## 14. Evaluation and the production feedback loop
+
+| Layer | What | Where |
+|---|---|---|
+| Unit tests | Deterministic code: guards, routing, citations, SQL guard | `backend/tests`, 100 % coverage, every PR |
+| Offline evals | 25 golden cases on the real model: recall@5, tool accuracy, faithfulness (LLM-as-judge), unsafe handled | `evals/`, CI on behaviour changes, thresholds fail the PR |
+| Judge calibration | Cohen's kappa between the judge and human labels on a sample | `evaluation.cohen_kappa` |
+| Online signals | Thumbs up/down, error rate, latency, cost | `POST /api/feedback`, audit log |
+| Feedback → evals | Thumbs-down answers exported with their question as candidate cases; a person labels them; they join the golden set | `python -m platform_copilot.feedback` |
+
+**Why kappa.** If 90 % of answers are faithful, a judge that always says "faithful" agrees 90 %
+of the time and is useless. Kappa corrects for chance: trust the judge in CI only above a
+threshold (around 0.6) on a labelled sample. In this project the 3B judge is *not* trusted yet.
+
+**Measuring before claiming.** The search-fallback decision was made by comparing three agent
+variants on the same cases (see the README): "always search first" looked right and broke
+tool choice; only the numbers showed it.
+
+## 15. Monitoring and drift
+
+`GET /api/monitoring?days=7` (platform team only, `monitoring.py`) compares the last window with
+the previous one:
+
+- **Health:** questions, error rate, p50/p95 latency, cost per answer, thumbs-down rate.
+- **Drift (PSI):** the *tool mix* (agent behaviour changed?) and *question length* buckets
+  (inputs changed?). PSI < 0.1 stable, 0.1–0.2 watch, > 0.2 investigate.
+
+With LLM features you do not retrain, but things drift: users ask new things, the catalog
+changes, a provider updates the model behind the same name. Signals to alert on: PSI above
+0.2, p95 latency or cost per answer up a lot, thumbs-down rate up, error rate up. Next step:
+embedding drift (distance between this week's question embeddings and the baseline's), and a
+weekly re-run of the golden set against the production model to catch silent model changes.
+
+## 16. Safety nets and security
+
+| Risk | Control | Where |
+|---|---|---|
+| Model outage, timeout, 429/5xx | Retry with exponential backoff, then a fallback model; tool and model timeouts; max steps | `llm/fallback.py`, `agent.py` |
+| Writes by a confused model | Writes only create *pending* requests; owner approves (own loop) or user confirms (`interrupt`, LangGraph) | `access.py`, `agent_graph.py` |
+| Prompt injection | Tool results are data, never instructions (prompt); permissions in SQL; read-only DB role; questions with injection patterns flagged | `guards.py` |
+| Data leaks | Retrieval filtered by the user's groups inside the SQL; PII masked before external models | `rag/search.py`, `guards.MaskingProvider` |
+| Malicious SQL | sqlglot guard + READ ONLY transaction + `catalog_ro` role + statement timeout | `sql_guard.py`, `query_catalog.py` |
+| Invented citations | Only ids the tools returned survive; the rest are dropped and audited | `agent.resolve_citations` |
+| Abuse / cost | Per-user rate limit (429), cost per answer tracked | `ratelimit.py`, traces |
+| Identity | OIDC, JWT validated locally (RS256, iss, aud, exp); groups from the IdP | `auth.py` |
+
+Guards *flag* rather than block: a regex blocks legitimate questions too. The controls that
+must hold do not depend on the model behaving.
+
+## 17. Deploying on GCP
+
+- **Image:** `backend/Dockerfile`, multi-stage with `uv`, dependencies from the lock file,
+  non-root user (uid 10001). Built and run locally: `/healthz` answers without the database.
+- **Run:** Cloud Run (`deploy/cloud-run-service.yaml`): min 1 instance (no cold start), max 10
+  (caps cost and DB connections: 10 × pool 5), concurrency 40 (async), CPU always on for SSE,
+  Cloud SQL for PostgreSQL with pgvector, secrets from Secret Manager, a dedicated service
+  account with Vertex AI User and Cloud SQL Client roles.
+- **Model:** `LLM_PROVIDER=vertex` uses Gemini on Vertex AI (`llm/vertex.py`) with Application
+  Default Credentials, so no API key anywhere.
+- **CI/CD:** `deploy/cloudbuild.yaml`: test, build, push to Artifact Registry, deploy a new
+  revision. Traffic can be split between revisions for a canary.
+- **MLOps reuse:** evals reports could log to MLflow or Vertex AI Experiments; traces go to Cloud
+  Trace via OTLP. This is not deployed: there is no GCP project behind this practice repo.
