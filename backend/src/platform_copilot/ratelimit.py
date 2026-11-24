@@ -36,7 +36,7 @@ class RateLimiter:
         self._buckets: dict[str, Bucket] = {}
 
     def acquire(self, key: str) -> float:
-        """Take one token for `key`. Returns 0 if allowed, else the seconds until one is back."""
+        """Take one token for `key`. Returns 0 when allowed, or the seconds to wait."""
         now = self._clock()
         bucket = self._buckets.setdefault(key, Bucket(self.capacity, now))
         elapsed = now - bucket.updated_at
