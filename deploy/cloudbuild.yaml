@@ -1,0 +1,25 @@
+# CI/CD on GCP: test, build, push to Artifact Registry, deploy a new Cloud Run revision.
+# `gcloud builds submit --config deploy/cloudbuild.yaml` or a trigger on main.
+steps:
+  - id: test
+    name: ghcr.io/astral-sh/uv:python3.12-bookworm
+    dir: backend
+    entrypoint: sh
+    args: ["-c", "uv sync --locked && uv run ruff check . && uv run mypy src && uv run pytest"]
+    env: ["TEST_DATABASE_URL=postgresql://postgres@pg/platform_copilot_test",
+          "TEST_ADMIN_URL=postgresql://postgres@pg/postgres"]
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "$_IMAGE:$SHORT_SHA", "backend"]
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "$_IMAGE:$SHORT_SHA"]
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args: ["run", "deploy", "platform-copilot-api", "--image", "$_IMAGE:$SHORT_SHA",
+           "--region", "europe-west1"]
+substitutions:
+  _IMAGE: europe-west1-docker.pkg.dev/${PROJECT_ID}/platform-copilot/api
+options:
+  logging: CLOUD_LOGGING_ONLY

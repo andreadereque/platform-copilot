@@ -7,11 +7,14 @@ import pytest
 from anthropic import DefaultAsyncHttpxClient
 
 from platform_copilot.config import Settings
+from platform_copilot.guards import MaskingProvider
 from platform_copilot.llm.base import ChatReply, LLMError, ToolCall, assistant_message
 from platform_copilot.llm.claude import ClaudeProvider
 from platform_copilot.llm.factory import build_llm
 from platform_copilot.llm.fake import FakeProvider
+from platform_copilot.llm.fallback import FallbackProvider
 from platform_copilot.llm.ollama import OllamaProvider
+from platform_copilot.llm.vertex import VertexProvider
 
 TOOLS: list[dict[str, Any]] = [
     {
@@ -198,8 +201,19 @@ def test_factory_follows_settings() -> None:
     assert isinstance(build_llm(Settings(llm_provider="ollama")), OllamaProvider)
     assert isinstance(build_llm(Settings(llm_provider="fake")), FakeProvider)
     claude_llm = build_llm(Settings(llm_provider="claude", anthropic_api_key="k"))
-    assert isinstance(claude_llm, ClaudeProvider)
+    assert isinstance(claude_llm, MaskingProvider)  # external: PII masked on the way out
+    assert isinstance(claude_llm.inner, ClaudeProvider)
     assert claude_llm.model == "claude-opus-5-5"
+    unmasked = build_llm(Settings(llm_provider="claude", anthropic_api_key="k",
+                                  mask_pii_external=False))  # fmt: skip
+    assert isinstance(unmasked, ClaudeProvider)
+    vertex = build_llm(Settings(llm_provider="vertex", gcp_project="p", llm_fallback="ollama"))
+    assert isinstance(vertex, FallbackProvider)
+    assert isinstance(vertex.primary, MaskingProvider)
+    assert isinstance(vertex.primary.inner, VertexProvider)
+    assert isinstance(vertex.fallback, OllamaProvider)
+    local = build_llm(Settings(llm_provider="ollama", llm_fallback="ollama"))
+    assert isinstance(local, OllamaProvider)  # no point falling back to itself
 
 
 async def test_fake_provider_runs_out_loudly() -> None:
