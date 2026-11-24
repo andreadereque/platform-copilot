@@ -68,6 +68,49 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
+  it("rates the answer and says thanks", async () => {
+    let body: unknown;
+    server.use(
+      requestsFor({}),
+      chatReturns(journey),
+      http.post("/api/feedback", async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json({ id: 7 }, { status: 201 });
+      }),
+    );
+    renderWithQuery(<App auth={laura.auth} />);
+    await userEvent.type(
+      await screen.findByLabelText("Pregunta"),
+      "hola{Enter}",
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "No me ha servido" }),
+    );
+    expect(
+      await screen.findByText("Gracias por tu valoración."),
+    ).toBeInTheDocument();
+    expect(body).toEqual({ conversation_id: "abc", rating: -1 });
+  });
+
+  it("shows when feedback cannot be saved", async () => {
+    server.use(
+      requestsFor({}),
+      chatReturns(journey),
+      http.post("/api/feedback", () =>
+        HttpResponse.json({ detail: "db down" }, { status: 500 }),
+      ),
+    );
+    renderWithQuery(<App auth={laura.auth} />);
+    await userEvent.type(
+      await screen.findByLabelText("Pregunta"),
+      "hola{Enter}",
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Me ha servido" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("db down");
+  });
+
   it("starts from an example question and shows server errors", async () => {
     server.use(
       requestsFor({}),

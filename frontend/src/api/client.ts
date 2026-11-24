@@ -119,3 +119,16 @@ export async function streamChat(req: ChatRequest): Promise<void> {
     }
   }
 }
+
+export type Feedback = { conversation_id: string; rating: 1 | -1 };
+
+export function sendFeedback(
+  token: string,
+  feedback: Feedback,
+): Promise<{ id: number }> {
+  return request("/api/feedback", z.object({ id: z.number() }), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...bearer(token) },
+    body: JSON.stringify(feedback),
+  });
+}
