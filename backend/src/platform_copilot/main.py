@@ -12,6 +12,7 @@ from platform_copilot.db import make_pool
 from platform_copilot.embeddings import Embedder, build_embedder
 from platform_copilot.llm.base import LLMProvider
 from platform_copilot.llm.factory import build_llm
+from platform_copilot.ratelimit import RateLimiter
 
 
 def create_app(
@@ -46,6 +47,7 @@ def create_app(
     app.state.llm = llm
     app.state.embedder = embedder
     app.state.token_validator = token_validator
+    app.state.chat_limiter = RateLimiter(settings.chat_burst, settings.chat_per_minute / 60)
     app.include_router(health.router)
     app.include_router(access_requests.router)
     app.include_router(chat.router)
