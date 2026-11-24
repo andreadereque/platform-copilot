@@ -1,58 +1,94 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { fetchUsers } from "./api/client";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import type { Auth, Session } from "./auth/oidc";
 import { ApprovalsPanel } from "./components/ApprovalsPanel";
 import { ChatPanel } from "./components/ChatPanel";
 
-const DEFAULT_USER = "laura@sales";
+type AuthState =
+  | { status: "loading" }
+  | { status: "anonymous" }
+  | { status: "failed"; message: string }
+  | { status: "signed-in"; session: Session };
 
-export function App() {
+function LoginScreen({ auth }: { auth: Auth }) {
+  return (
+    <div className="login">
+      <h1>platform-copilot</h1>
+      <p className="meta">Proyecto de práctica · usuarios y datos inventados</p>
+      <button type="button" onClick={() => void auth.login()}>
+        Entrar con Keycloak
+      </button>
+    </div>
+  );
+}
+
+export function App({ auth }: { auth: Auth }) {
   const client = useQueryClient();
-  const users = useQuery({ queryKey: ["users"], queryFn: fetchUsers });
-  const [selected, setSelected] = useState(DEFAULT_USER);
+  const [state, setState] = useState<AuthState>({ status: "loading" });
 
-  if (users.isPending) {
+  useEffect(() => {
+    auth.restore().then(
+      (session) => {
+        if (session) {
+          setState({ status: "signed-in", session });
+          return;
+        }
+        setState({ status: "anonymous" });
+      },
+      (error: unknown) =>
+        setState({ status: "failed", message: String(error) }),
+    );
+    // A renewed access token replaces the old one; the user and their queries stay.
+    return auth.onRenewed((session) =>
+      setState({ status: "signed-in", session }),
+    );
+  }, [auth]);
+
+  if (state.status === "loading") {
     return <p className="loading">Cargando…</p>;
   }
-  if (users.isError) {
+  if (state.status === "failed") {
     return (
-      <p className="error" role="alert">
-        No se pudo cargar la lista de usuarios: {users.error.message}
-      </p>
+      <div className="login">
+        <p className="error" role="alert">
+          No se pudo completar el login: {state.message}
+        </p>
+        <LoginScreen auth={auth} />
+      </div>
     );
   }
-  const user =
-    users.data.find((candidate) => candidate.id === selected) ?? users.data[0];
+  if (state.status === "anonymous") {
+    return <LoginScreen auth={auth} />;
+  }
+  const { session } = state;
 
   return (
     <div className="app">
       <header className="bar">
         <strong>platform-copilot</strong>
         <span className="meta">Proyecto de práctica · datos inventados</span>
-        <label className="sel" htmlFor="user">
-          Usuario
-          <select
-            id="user"
-            value={user.id}
-            onChange={(event) => setSelected(event.target.value)}
+        <span className="sel">
+          <span>
+            {session.user.name} · {session.user.groups.join(", ")}
+          </span>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => void auth.logout()}
           >
-            {users.data.map((candidate) => (
-              <option key={candidate.id} value={candidate.id}>
-                {candidate.id} · {candidate.groups.join(", ")}
-              </option>
-            ))}
-          </select>
-        </label>
+            Salir
+          </button>
+        </span>
       </header>
       <main className="cols">
         <ChatPanel
-          key={user.id}
-          user={user}
+          key={session.user.id}
+          session={session}
           onApprovalPending={() =>
             void client.invalidateQueries({ queryKey: ["access-requests"] })
           }
         />
-        <ApprovalsPanel user={user} />
+        <ApprovalsPanel session={session} />
       </main>
     </div>
   );

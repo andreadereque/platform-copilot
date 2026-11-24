@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
@@ -7,8 +7,11 @@ import { App } from "./App";
 import {
   decidedRequest,
   journey,
+  fakeAuth,
   pendingRequest,
+  sessionFor,
   sseStream,
+  userFromAuthorization,
   users,
 } from "./test/fixtures";
 import { renderWithQuery } from "./test/render";
@@ -30,18 +33,16 @@ function page(items: unknown[], nextCursor: string | null = null) {
 
 function requestsFor(lists: Record<string, unknown[]>) {
   return http.get("/api/access-requests", ({ request }) =>
-    page(lists[request.headers.get("X-User-Id") ?? ""] ?? []),
+    page(lists[userFromAuthorization(request)] ?? []),
   );
 }
 
+const laura = fakeAuth(sessionFor(users[0]));
+
 describe("App", () => {
   it("asks a question and shows tools, answer, sources and stats", async () => {
-    server.use(
-      http.get("/api/users", () => HttpResponse.json(users)),
-      requestsFor({}),
-      chatReturns(journey),
-    );
-    renderWithQuery(<App />);
+    server.use(requestsFor({}), chatReturns(journey));
+    renderWithQuery(<App auth={laura.auth} />);
     expect(
       await screen.findByText("No tienes peticiones."),
     ).toBeInTheDocument();
@@ -69,14 +70,13 @@ describe("App", () => {
 
   it("starts from an example question and shows server errors", async () => {
     server.use(
-      http.get("/api/users", () => HttpResponse.json(users)),
       requestsFor({}),
       chatReturns([
         ["step", { n: 1, max: 5 }],
         ["error", { code: "llm_error", message: "Ollama is down" }],
       ]),
     );
-    renderWithQuery(<App />);
+    renderWithQuery(<App auth={laura.auth} />);
     await userEvent.click(
       await screen.findByRole("button", { name: /Consumidor de Kafka/i }),
     );
@@ -87,13 +87,12 @@ describe("App", () => {
 
   it("explains when the chat cannot be reached", async () => {
     server.use(
-      http.get("/api/users", () => HttpResponse.json(users)),
       requestsFor({}),
       http.post("/api/chat", () =>
         HttpResponse.json({ detail: "down" }, { status: 503 }),
       ),
     );
-    renderWithQuery(<App />);
+    renderWithQuery(<App auth={laura.auth} />);
     await userEvent.type(
       await screen.findByLabelText("Pregunta"),
       "hola{Enter}",
@@ -104,11 +103,8 @@ describe("App", () => {
   });
 
   it("ignores empty questions", async () => {
-    server.use(
-      http.get("/api/users", () => HttpResponse.json(users)),
-      requestsFor({}),
-    );
-    renderWithQuery(<App />);
+    server.use(requestsFor({}));
+    renderWithQuery(<App auth={laura.auth} />);
     await userEvent.type(
       await screen.findByLabelText("Pregunta"),
       "   {Enter}",
@@ -126,9 +122,8 @@ describe("App", () => {
       ],
     };
     server.use(
-      http.get("/api/users", () => HttpResponse.json(users)),
       http.get("/api/access-requests", ({ request }) =>
-        page(lists[request.headers.get("X-User-Id") ?? ""] ?? []),
+        page(lists[userFromAuthorization(request)] ?? []),
       ),
       http.post("/api/access-requests/42/approve", () => {
         lists = {
@@ -146,11 +141,7 @@ describe("App", () => {
         HttpResponse.json({ detail: "already rejected" }, { status: 409 }),
       ),
     );
-    renderWithQuery(<App />);
-    await userEvent.selectOptions(
-      await screen.findByLabelText("Usuario"),
-      "marta@finance",
-    );
+    renderWithQuery(<App auth={fakeAuth(sessionFor(users[1])).auth} />);
     const cards = await screen.findAllByText(/^#\d+ · /);
     expect(cards).toHaveLength(3);
     expect(screen.getByText("aprobada por marta@finance")).toBeInTheDocument();
@@ -177,14 +168,13 @@ describe("App", () => {
   it("refreshes the approvals panel when the agent creates a request", async () => {
     let calls = 0;
     server.use(
-      http.get("/api/users", () => HttpResponse.json(users)),
       http.get("/api/access-requests", () => {
         calls += 1;
         return page([]);
       }),
       chatReturns(journey),
     );
-    renderWithQuery(<App />);
+    renderWithQuery(<App auth={laura.auth} />);
     await userEvent.type(
       await screen.findByLabelText("Pregunta"),
       "pide acceso{Enter}",
@@ -196,7 +186,6 @@ describe("App", () => {
   it("loads the next page of requests with the cursor", async () => {
     const cursors: Array<string | null> = [];
     server.use(
-      http.get("/api/users", () => HttpResponse.json(users)),
       http.get("/api/access-requests", ({ request }) => {
         const cursor = new URL(request.url).searchParams.get("cursor");
         cursors.push(cursor);
@@ -206,7 +195,7 @@ describe("App", () => {
         return page([pendingRequest], "c2");
       }),
     );
-    renderWithQuery(<App />);
+    renderWithQuery(<App auth={laura.auth} />);
     await userEvent.click(
       await screen.findByRole("button", { name: "Cargar más" }),
     );
@@ -220,28 +209,65 @@ describe("App", () => {
     expect(cursors).toEqual([null, "c2"]);
   });
 
-  it("falls back to the first user and shows loading errors", async () => {
+  it("shows who is logged in and logs out", async () => {
+    const { auth } = fakeAuth(sessionFor(users[1]));
+    server.use(requestsFor({}));
+    renderWithQuery(<App auth={auth} />);
+    expect(
+      await screen.findByText("Marta Ruiz · finance, public"),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Salir" }));
+    expect(auth.logout).toHaveBeenCalled();
+  });
+
+  it("sends the renewed access token on the next request", async () => {
+    const tokens: string[] = [];
     server.use(
-      http.get("/api/users", () => HttpResponse.json([users[1]])),
+      http.get("/api/access-requests", ({ request }) => {
+        tokens.push(request.headers.get("Authorization") ?? "");
+        return page([pendingRequest], "next");
+      }),
+    );
+    const { auth, renew } = fakeAuth(sessionFor(users[1]));
+    renderWithQuery(<App auth={auth} />);
+    await screen.findByText("#42 · sales_es_monthly");
+    act(() => renew({ ...sessionFor(users[1]), token: "renewed" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cargar más" }));
+    await waitFor(() =>
+      expect(tokens).toEqual(["Bearer token-marta@finance", "Bearer renewed"]),
+    );
+  });
+
+  it("asks anonymous users to log in with Keycloak", async () => {
+    const { auth } = fakeAuth(null);
+    renderWithQuery(<App auth={auth} />);
+    expect(screen.getByText("Cargando…")).toBeInTheDocument();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Entrar con Keycloak" }),
+    );
+    expect(auth.login).toHaveBeenCalled();
+  });
+
+  it("explains a failed login and offers to try again", async () => {
+    const { auth } = fakeAuth(null, {
+      restore: () => Promise.reject(new Error("invalid_grant")),
+    });
+    renderWithQuery(<App auth={auth} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No se pudo completar el login: Error: invalid_grant",
+    );
+    expect(
+      screen.getByRole("button", { name: "Entrar con Keycloak" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows loading errors from the API", async () => {
+    server.use(
       http.get("/api/access-requests", () =>
         HttpResponse.json({ detail: "db down" }, { status: 500 }),
       ),
     );
-    renderWithQuery(<App />);
-    expect(await screen.findByLabelText("Usuario")).toHaveValue(
-      "marta@finance",
-    );
+    renderWithQuery(<App auth={laura.auth} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("db down");
-  });
-
-  it("shows loading and an error when users cannot be loaded", async () => {
-    server.use(
-      http.get("/api/users", () =>
-        HttpResponse.json({ detail: "offline" }, { status: 503 }),
-      ),
-    );
-    renderWithQuery(<App />);
-    expect(screen.getByText("Cargando…")).toBeInTheDocument();
-    expect(await screen.findByRole("alert")).toHaveTextContent("offline");
   });
 });

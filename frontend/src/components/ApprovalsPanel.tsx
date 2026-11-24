@@ -4,7 +4,8 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { decideRequest, fetchRequests } from "../api/client";
-import type { AccessRequest, User } from "../api/schemas";
+import type { AccessRequest } from "../api/schemas";
+import type { Session } from "../auth/oidc";
 
 const STATUS_LABEL = {
   pending: "pendiente",
@@ -24,19 +25,20 @@ function Decided({ request }: { request: AccessRequest }) {
   );
 }
 
-export function ApprovalsPanel({ user }: { user: User }) {
+export function ApprovalsPanel({ session }: { session: Session }) {
+  const { user, token } = session;
   const client = useQueryClient();
   // Keyset pagination: each page brings the cursor for the next one ("Cargar más").
   const requests = useInfiniteQuery({
     queryKey: requestsKey(user.id),
-    queryFn: ({ pageParam }) => fetchRequests(user.id, pageParam),
+    queryFn: ({ pageParam }) => fetchRequests(token, pageParam),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.next_cursor,
   });
   const items = requests.data?.pages.flatMap((page) => page.items);
   const decide = useMutation({
     mutationFn: (input: { id: number; decision: "approve" | "reject" }) =>
-      decideRequest(user.id, input.id, input.decision),
+      decideRequest(token, input.id, input.decision),
     onSettled: () =>
       client.invalidateQueries({ queryKey: requestsKey(user.id) }),
   });

@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from tokens import bearer
 
 from platform_copilot import audit
 from platform_copilot.access import requests_for_owner
@@ -110,8 +111,8 @@ async def test_audit_pages(pool: Pool) -> None:
 
 # ---------- API ----------
 
-MARTA = {"X-User-Id": "marta@finance"}
-DEV = {"X-User-Id": "dev@platform"}
+MARTA = bearer("marta@finance")
+DEV = bearer("dev@platform")
 
 
 async def test_api_access_requests_pages(client: TestClient, conn: Conn) -> None:

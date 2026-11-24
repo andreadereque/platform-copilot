@@ -1,6 +1,7 @@
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from tokens import bearer
 
 from platform_copilot import audit
 from platform_copilot.access import AccessError, create_request, decide, get_request
@@ -94,17 +95,7 @@ async def test_tool_creates_a_pending_request(pool: Pool, settings: Settings) ->
 
 # ---------- API ----------
 
-MARTA = {"X-User-Id": "marta@finance"}
-
-
-def test_users_endpoint(client: TestClient) -> None:
-    ids = [user["id"] for user in client.get("/api/users").json()]
-    assert "laura@sales" in ids
-
-
-def test_unknown_user_is_401(client: TestClient) -> None:
-    response = client.get("/api/access-requests", headers={"X-User-Id": "intruder"})
-    assert response.status_code == 401
+MARTA = bearer("marta@finance")
 
 
 async def test_owner_sees_and_decides_requests(client: TestClient, pool: Pool) -> None:
@@ -113,7 +104,7 @@ async def test_owner_sees_and_decides_requests(client: TestClient, pool: Pool) -
     listed = client.get("/api/access-requests", headers=MARTA).json()
     assert [item["id"] for item in listed["items"]] == [2, 1]
     assert listed["next_cursor"] is None
-    laura = client.get("/api/access-requests", headers={"X-User-Id": "laura@sales"}).json()
+    laura = client.get("/api/access-requests", headers=bearer("laura@sales")).json()
     assert laura == {"items": [], "next_cursor": None}
     approved = client.post("/api/access-requests/1/approve", headers=MARTA)
     assert approved.json()["status"] == "approved"
@@ -126,5 +117,5 @@ async def test_owner_sees_and_decides_requests(client: TestClient, pool: Pool) -
 async def test_audit_is_only_for_the_platform_team(client: TestClient, pool: Pool) -> None:
     await audit.record(pool, "laura@sales", "c1", "question", {"text": "hola"})
     assert client.get("/api/audit", headers=MARTA).status_code == 403
-    events = client.get("/api/audit?limit=5", headers={"X-User-Id": "dev@platform"}).json()
+    events = client.get("/api/audit?limit=5", headers=bearer("dev@platform")).json()
     assert events["items"][0]["payload"] == {"text": "hola"}

@@ -4,6 +4,7 @@ from typing import Any
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from tokens import bearer, make_validator
 
 from platform_copilot.agent import Event
 from platform_copilot.api.chat import format_event, sse
@@ -15,7 +16,7 @@ from platform_copilot.llm.fake import FakeProvider
 from platform_copilot.main import create_app
 
 Conn = psycopg.AsyncConnection[dict[str, object]]
-LAURA = {"X-User-Id": "laura@sales"}
+LAURA = bearer("laura@sales")
 
 
 def parse_sse(text: str) -> list[tuple[str, str]]:
@@ -33,7 +34,8 @@ def llm() -> FakeProvider:
 
 @pytest.fixture
 def chat_client(settings: Settings, pool: Pool, llm: FakeProvider) -> Iterator[TestClient]:
-    with TestClient(create_app(settings, llm=llm, embedder=FakeEmbedder())) as client:
+    app = create_app(settings, llm=llm, embedder=FakeEmbedder(), token_validator=make_validator())
+    with TestClient(app) as client:
         yield client
 
 
@@ -64,8 +66,8 @@ def test_chat_creates_a_conversation_id(chat_client: TestClient, llm: FakeProvid
 
 def test_chat_validates_the_request(chat_client: TestClient) -> None:
     assert chat_client.post("/api/chat", headers=LAURA, json={"message": ""}).status_code == 422
-    unknown = chat_client.post("/api/chat", headers={"X-User-Id": "x"}, json={"message": "hola"})
-    assert unknown.status_code == 401
+    anonymous = chat_client.post("/api/chat", json={"message": "hola"})
+    assert anonymous.status_code == 401
 
 
 async def test_sse_turns_crashes_into_an_error_event() -> None:

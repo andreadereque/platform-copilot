@@ -25,7 +25,7 @@ from platform_copilot.rag.ingest import _first, ingest_docs
 from platform_copilot.rag.search import hybrid_search
 from platform_copilot.tools.base import ToolContext
 from platform_copilot.tools.search_docs import TOOL, SearchDocsArgs
-from platform_copilot.users import UnknownUserError, User, get_user, list_users
+from platform_copilot.users import UnknownUserError, User, get_user, upsert_user
 
 Conn = psycopg.AsyncConnection[dict[str, object]]
 LAURA = User("laura@sales", "Laura Gil", ["sales", "public"])
@@ -180,8 +180,8 @@ async def test_ingest_with_tuple_rows(settings: Settings, conn: Conn, tmp_path: 
 
 
 async def test_users(pool: Pool) -> None:
-    users = await list_users(pool)
-    assert [u.id for u in users][:2] == ["ana@hr", "dev@platform"]
     assert (await get_user(pool, "laura@sales")).groups == ["sales", "public"]
+    await upsert_user(pool, User("laura@sales", "Laura Gil", ["sales"]))
+    assert (await get_user(pool, "laura@sales")).groups == ["sales"]
     with pytest.raises(UnknownUserError):
         await get_user(pool, "nobody")

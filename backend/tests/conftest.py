@@ -8,6 +8,7 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from psycopg.rows import dict_row
+from tokens import make_validator
 
 from platform_copilot.config import Settings
 from platform_copilot.db import Pool, make_pool
@@ -54,7 +55,7 @@ def settings() -> Settings:
 def client(
     settings: Settings, conn: psycopg.AsyncConnection[dict[str, object]]
 ) -> Iterator[TestClient]:
-    with TestClient(create_app(settings)) as test_client:
+    with TestClient(create_app(settings, token_validator=make_validator())) as test_client:
         yield test_client
 
 
