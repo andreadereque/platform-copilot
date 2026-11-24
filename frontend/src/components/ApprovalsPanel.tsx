@@ -1,4 +1,8 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { decideRequest, fetchRequests } from "../api/client";
 import type { AccessRequest, User } from "../api/schemas";
 
@@ -22,10 +26,14 @@ function Decided({ request }: { request: AccessRequest }) {
 
 export function ApprovalsPanel({ user }: { user: User }) {
   const client = useQueryClient();
-  const requests = useQuery({
+  // Keyset pagination: each page brings the cursor for the next one ("Cargar más").
+  const requests = useInfiniteQuery({
     queryKey: requestsKey(user.id),
-    queryFn: () => fetchRequests(user.id),
+    queryFn: ({ pageParam }) => fetchRequests(user.id, pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
   });
+  const items = requests.data?.pages.flatMap((page) => page.items);
   const decide = useMutation({
     mutationFn: (input: { id: number; decision: "approve" | "reject" }) =>
       decideRequest(user.id, input.id, input.decision),
@@ -50,10 +58,8 @@ export function ApprovalsPanel({ user }: { user: User }) {
           {decide.error.message}
         </p>
       )}
-      {requests.data?.length === 0 && (
-        <p className="meta">No tienes peticiones.</p>
-      )}
-      {requests.data?.map((request) => (
+      {items?.length === 0 && <p className="meta">No tienes peticiones.</p>}
+      {items?.map((request) => (
         <div key={request.id} className={`req req-${request.status}`}>
           <b>
             #{request.id} · {request.product}
@@ -88,6 +94,16 @@ export function ApprovalsPanel({ user }: { user: User }) {
           {request.status !== "pending" && <Decided request={request} />}
         </div>
       ))}
+      {requests.hasNextPage && (
+        <button
+          type="button"
+          className="ghost more"
+          disabled={requests.isFetchingNextPage}
+          onClick={() => void requests.fetchNextPage()}
+        >
+          Cargar más
+        </button>
+      )}
     </aside>
   );
 }

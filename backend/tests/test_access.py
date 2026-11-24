@@ -50,7 +50,7 @@ async def test_owner_decides_and_it_is_audited(pool: Pool) -> None:
     decided = await decide(pool, 1, "marta@finance", "approved")
     assert (decided.status, decided.decided_by) == ("approved", "marta@finance")
     assert decided.decided_at is not None
-    events = await audit.recent(pool, 5)
+    events = (await audit.page(pool, 5)).items
     assert events[0]["kind"] == "decision"
     assert events[0]["payload"] == {"request_id": 1, "status": "approved"}
 
@@ -111,8 +111,10 @@ async def test_owner_sees_and_decides_requests(client: TestClient, pool: Pool) -
     await create_request(pool, "sales_es_monthly", "laura@sales", "informe")
     await create_request(pool, "finance_invoices_es", "laura@sales", "auditoría")
     listed = client.get("/api/access-requests", headers=MARTA).json()
-    assert [item["id"] for item in listed] == [2, 1]
-    assert client.get("/api/access-requests", headers={"X-User-Id": "laura@sales"}).json() == []
+    assert [item["id"] for item in listed["items"]] == [2, 1]
+    assert listed["next_cursor"] is None
+    laura = client.get("/api/access-requests", headers={"X-User-Id": "laura@sales"}).json()
+    assert laura == {"items": [], "next_cursor": None}
     approved = client.post("/api/access-requests/1/approve", headers=MARTA)
     assert approved.json()["status"] == "approved"
     rejected = client.post("/api/access-requests/2/reject", headers=MARTA)
@@ -125,4 +127,4 @@ async def test_audit_is_only_for_the_platform_team(client: TestClient, pool: Poo
     await audit.record(pool, "laura@sales", "c1", "question", {"text": "hola"})
     assert client.get("/api/audit", headers=MARTA).status_code == 403
     events = client.get("/api/audit?limit=5", headers={"X-User-Id": "dev@platform"}).json()
-    assert events[0]["payload"] == {"text": "hola"}
+    assert events["items"][0]["payload"] == {"text": "hola"}
