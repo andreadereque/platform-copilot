@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     oidc_issuer: str = "http://localhost:8080/realms/platform-copilot"
     oidc_audience: str = "platform-copilot-api"
     oidc_jwks_url: str = ""  # empty: Keycloak's default, <issuer>/protocol/openid-connect/certs
+    # /api/chat rate limit per user: a burst of `chat_burst` questions, then `chat_per_minute`.
+    chat_burst: int = 5
+    chat_per_minute: float = 10
 
 
 @lru_cache

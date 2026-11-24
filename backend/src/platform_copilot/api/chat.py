@@ -2,11 +2,12 @@
 
 import json
 import logging
+import math
 import uuid
 from collections.abc import AsyncIterator
 from typing import Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -33,8 +34,15 @@ class ChatRequest(BaseModel):
 async def chat(
     body: ChatRequest, request: Request, pool: PoolDep, user: UserDep
 ) -> StreamingResponse:
-    conversation_id = body.conversation_id or uuid.uuid4().hex[:12]
     state = request.app.state
+    retry_after = state.chat_limiter.acquire(user.id)
+    if retry_after > 0:
+        raise HTTPException(
+            429,
+            "Too many questions, wait a moment",
+            headers={"Retry-After": str(math.ceil(retry_after))},
+        )
+    conversation_id = body.conversation_id or uuid.uuid4().hex[:12]
     ctx = ToolContext(pool, user, state.embedder, state.settings, conversation_id)
     history = [turn.model_dump() for turn in body.history]
     events = run_agent(body.message, history, ctx, state.llm)
