@@ -14,7 +14,10 @@ Ollama (`qwen2.5`) or Claude · GitHub Actions.
 
 **Architecture, end to end and interview-oriented:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 (login with OAuth 2.0 + PKCE, keyset pagination, concurrency vs parallelism, async database
-driver, rate limiting, testing, scaling).
+driver, rate limiting, testing, scaling) and, in part 2, AI engineering in production: a
+LangGraph version of the agent with human-in-the-loop, versioned prompts, OpenTelemetry traces
+with cost and latency, feedback loop and judge calibration, drift monitoring, safety nets, and
+deployment on GCP (Cloud Run, Gemini on Vertex AI).
 
 ## How it works
 
@@ -146,6 +149,15 @@ What the numbers say, and what is still open:
   n+1` with a matching index: every page costs the same and inserts do not shift pages.
 - **Concurrent hybrid search.** The two retrieval queries are I/O-bound, so `asyncio.gather` on two
   connections halves the wait without threads.
+- **Two agent engines.** The hand-written loop (simple, streams natively) and the same agent in
+  LangGraph (state with reducers, `interrupt()` before writes, a checkpointer per thread), to
+  compare what a framework adds.
+- **Context as code.** Prompts are versioned files pinned by hashes; the version is a setting,
+  logged with every answer and every trace.
+- **Observability by decoration.** `TracedProvider` wraps any model with OpenTelemetry spans
+  (GenAI conventions): tokens, latency, cost; the agent does not change.
+- **A feedback loop into the evals.** Thumbs-down answers become candidate golden cases; the LLM
+  judge is checked against human labels with Cohen's kappa before its metric is trusted.
 - **Rate limit on the expensive endpoint.** A per-user token bucket in front of the LLM; in memory
   on purpose (one process), Redis when there are replicas.
 - **pgvector, not a separate vector database.** One PostgreSQL for docs, catalog, requests and audit;
@@ -182,8 +194,8 @@ What the numbers say, and what is still open:
 | `audit_log` grows forever | Partitioned by month, old partitions archived |
 | Ollama on a laptop | Models inside the company's cloud account behind a shared LLM gateway: quotas and cost per team, PII masking, tracing |
 | Final answer sent in chunks after the model finishes | True token streaming from the provider |
-| `make dev` | Non-root images, Helm chart and Argo CD on OpenShift; managed PostgreSQL created with Terraform |
-| audit_log table | Plus OpenTelemetry traces per step (tokens, latency, cost) and alerts |
+| `make dev`; Cloud Run files not deployed | Cloud Run or GKE from the Cloud Build pipeline, Cloud SQL with pgvector, Terraform for the infrastructure |
+| OpenTelemetry spans to the console | OTLP to Cloud Trace / Langfuse, dashboards and alerts on p95, cost and PSI drift |
 | Seeded docs | Re-indexing when a document changes, with an index version |
 | 25 golden cases | Hundreds, built from real questions and user feedback; judge calibrated against human labels |
 | Three tools in code | The same tools exposed as an MCP server for other agents |
@@ -197,17 +209,22 @@ backend/src/platform_copilot/
   pagination.py     keyset cursors
   ratelimit.py      per-user token bucket for /api/chat
   keycloak_realm.py realm generator from seed/users.json
-  agent.py          the loop, system prompt, citation check
+  agent.py          the loop, citation check, traced
+  agent_graph.py    the same agent in LangGraph (interrupt before writes, checkpointer)
+  prompts/          versioned prompts + hash lock      context.py  token budget
+  observability.py  OpenTelemetry spans, cost          guards.py   injection flags, PII masking
+  feedback.py       thumbs up/down → eval candidates   monitoring.py  health and PSI drift
   tools/            search_docs, query_catalog, create_access_request
   rag/              chunking, ingest, hybrid search (concurrent queries + RRF)
   sql_guard.py      sqlglot checks
-  llm/              Ollama, Claude (anthropic SDK), fake
+  llm/              Ollama, Claude, Gemini on Vertex AI, fallback, fake
   access.py         access requests and decisions
   audit.py          append-only audit log
   evaluation.py     eval metrics (tested)
 frontend/src/       login (auth/oidc.ts), chat (SSE parser + reducer), approvals panel
 keycloak/           realm imported by Keycloak (generated)
 docs/               ARCHITECTURE.md
+deploy/             Cloud Run service, Cloud Build pipeline (backend/Dockerfile)
 db/init.sql         tables, catalog_ro role, append-only trigger
 seed/               fake users, data products and docs
 evals/              cases.json, run.py, results/
