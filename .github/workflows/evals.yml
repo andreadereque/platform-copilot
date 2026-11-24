@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - "backend/src/platform_copilot/agent.py"
+      - "backend/src/platform_copilot/agent_graph.py"
+      - "backend/src/platform_copilot/prompts/**"
+      - "backend/src/platform_copilot/context.py"
       - "backend/src/platform_copilot/tools/**"
       - "backend/src/platform_copilot/rag/**"
       - "backend/src/platform_copilot/llm/**"

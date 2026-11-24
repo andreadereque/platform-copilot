@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     # /api/chat rate limit per user: a burst of `chat_burst` questions, then `chat_per_minute`.
     chat_burst: int = 5
     chat_per_minute: float = 10
+    # Context engineering: which prompt version runs, and how much context goes in.
+    system_prompt_version: str = "v1"
+    history_token_budget: int = 2000
+    tool_result_max_chars: int = 6000
     # Observability: "console" prints the spans; prices in USD per million tokens (0 = local).
     otel_exporter: Literal["none", "console"] = "none"
     llm_price_input_per_mtok: float = 0.0
