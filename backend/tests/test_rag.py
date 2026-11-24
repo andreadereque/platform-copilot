@@ -1,5 +1,7 @@
+import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import httpx
 import psycopg
@@ -14,6 +16,7 @@ from platform_copilot.embeddings import (
     build_embedder,
     to_pgvector,
 )
+from platform_copilot.rag import search as search_module
 from platform_copilot.rag.chunking import (
     Document,
     FrontMatterError,
@@ -22,7 +25,7 @@ from platform_copilot.rag.chunking import (
     slugify,
 )
 from platform_copilot.rag.ingest import _first, ingest_docs
-from platform_copilot.rag.search import hybrid_search
+from platform_copilot.rag.search import Ranked, hybrid_search, rrf_fuse
 from platform_copilot.tools.base import ToolContext
 from platform_copilot.tools.search_docs import TOOL, SearchDocsArgs
 from platform_copilot.users import UnknownUserError, User, get_user, upsert_user
@@ -151,6 +154,39 @@ async def test_search_never_returns_chunks_from_other_groups(pool: Pool) -> None
     assert not any(source.startswith("hr-") for source in ids)
     hr_ids = await search(pool, "salarios de empleados restringidos", ["hr", "public"])
     assert hr_ids[0].startswith("hr-")
+
+
+def row(source_id: str) -> dict[str, Any]:
+    return {"source_id": source_id, "heading": source_id.upper(), "content": "..."}
+
+
+def test_rrf_rewards_chunks_found_by_both_lists() -> None:
+    by_vector = [row("a"), row("b"), row("c")]
+    by_text = [row("c"), row("d")]
+    hits = rrf_fuse([by_vector, by_text], top_k=3)
+    # c: 1/63 + 1/61 beats a: 1/61 alone; b and d tie on 1/62, the id breaks the tie.
+    assert [hit.source_id for hit in hits] == ["c", "a", "b"]
+    assert hits[0].score == pytest.approx(1 / 63 + 1 / 61)
+    assert hits[0].heading == "C"
+
+
+async def test_vector_and_text_queries_run_concurrently(
+    pool: Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both queries must be waiting at the same time. Run one after the other, the first would
+    wait at the barrier for a second query that never starts, and the test would time out."""
+    both_in_flight = asyncio.Barrier(2)
+    started: list[str] = []
+
+    async def slow_query(_pool: Pool, sql: str, _params: dict[str, Any]) -> Ranked:
+        started.append(sql)
+        await asyncio.wait_for(both_in_flight.wait(), timeout=1)
+        return [row(f"doc-{started.index(sql)}")]
+
+    monkeypatch.setattr(search_module, "fetch_ranked", slow_query)
+    hits = await hybrid_search(pool, "q", [0.0], ["public"], top_k=5)
+    assert started == [search_module.VECTOR_SQL, search_module.TEXT_SQL]
+    assert len(hits) == 2
 
 
 async def test_search_docs_tool(pool: Pool, settings: Settings) -> None:
