@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
     paths: ["backend/**", "db/**", "seed/**", ".github/workflows/backend.yml"]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
