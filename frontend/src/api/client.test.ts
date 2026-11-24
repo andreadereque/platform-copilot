@@ -12,18 +12,25 @@ import {
 import type { ChatEvent } from "./schemas";
 
 describe("api client", () => {
-  it("loads users and requests with the user header", async () => {
+  it("loads users and pages of requests with the user header", async () => {
     let header = "";
+    const urls: string[] = [];
     server.use(
       http.get("/api/users", () => HttpResponse.json(users)),
       http.get("/api/access-requests", ({ request }) => {
         header = request.headers.get("X-User-Id") ?? "";
-        return HttpResponse.json([pendingRequest]);
+        urls.push(new URL(request.url).search);
+        return HttpResponse.json({ items: [pendingRequest], next_cursor: "n" });
       }),
     );
     expect(await fetchUsers()).toEqual(users);
-    expect(await fetchRequests("marta@finance")).toEqual([pendingRequest]);
+    expect(await fetchRequests("marta@finance", null)).toEqual({
+      items: [pendingRequest],
+      next_cursor: "n",
+    });
+    await fetchRequests("marta@finance", "abc");
     expect(header).toBe("marta@finance");
+    expect(urls).toEqual(["?limit=10", "?limit=10&cursor=abc"]);
   });
 
   it("posts decisions and surfaces the backend's detail on errors", async () => {

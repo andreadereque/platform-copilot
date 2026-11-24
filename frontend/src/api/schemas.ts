@@ -24,6 +24,13 @@ export const accessRequestSchema = z.object({
 });
 export type AccessRequest = z.infer<typeof accessRequestSchema>;
 
+/** One keyset page: pass `next_cursor` back to get the next one; null means the last page. */
+export const requestsPageSchema = z.object({
+  items: z.array(accessRequestSchema),
+  next_cursor: z.string().nullable(),
+});
+export type RequestsPage = z.infer<typeof requestsPageSchema>;
+
 export const chatEventSchema = z.discriminatedUnion("event", [
   z.object({
     event: z.literal("start"),

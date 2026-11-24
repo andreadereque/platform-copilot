@@ -8,6 +8,7 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from platform_copilot.db import Pool
+from platform_copilot.pagination import Key, Page, decode_cursor, make_page
 
 
 async def record(
@@ -21,11 +22,16 @@ async def record(
         )
 
 
-async def recent(pool: Pool, limit: int) -> list[dict[str, Any]]:
+async def page(pool: Pool, limit: int, cursor: str | None = None) -> Page[dict[str, Any]]:
+    """Audit events, newest first, one keyset page at a time (see pagination.py)."""
+    query = "SELECT id, ts, user_id, conversation_id, kind, payload FROM audit_log"
+    params: dict[str, object] = {"limit": limit + 1}
+    if cursor is not None:
+        key = decode_cursor(cursor)
+        query += " WHERE (ts, id) < (%(ts)s, %(id)s)"
+        params.update(ts=key.created_at, id=key.id)
+    query += " ORDER BY ts DESC, id DESC LIMIT %(limit)s"
     async with pool.connection() as conn:
-        cursor = await conn.execute(
-            "SELECT id, ts, user_id, conversation_id, kind, payload"
-            " FROM audit_log ORDER BY id DESC LIMIT %s",
-            (limit,),
-        )
-        return list(await cursor.fetchall())
+        rows = list(await (await conn.execute(query, params)).fetchall())
+    keys = [Key(row["ts"], row["id"]) for row in rows]
+    return make_page(rows, keys, limit)

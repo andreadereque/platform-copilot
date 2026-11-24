@@ -2,9 +2,11 @@ import { z } from "zod";
 import {
   accessRequestSchema,
   chatEventSchema,
+  requestsPageSchema,
   userSchema,
   type AccessRequest,
   type ChatEvent,
+  type RequestsPage,
   type User,
 } from "./schemas";
 import { splitSse } from "./sse";
@@ -42,6 +44,8 @@ async function request<T>(
   return schema.parse(await response.json());
 }
 
+export const REQUESTS_PAGE_SIZE = 10;
+
 function asUser(userId: string): HeadersInit {
   return { "X-User-Id": userId };
 }
@@ -50,8 +54,15 @@ export function fetchUsers(): Promise<User[]> {
   return request("/api/users", z.array(userSchema));
 }
 
-export function fetchRequests(userId: string): Promise<AccessRequest[]> {
-  return request("/api/access-requests", z.array(accessRequestSchema), {
+export function fetchRequests(
+  userId: string,
+  cursor: string | null,
+): Promise<RequestsPage> {
+  const params = new URLSearchParams({ limit: String(REQUESTS_PAGE_SIZE) });
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+  return request(`/api/access-requests?${params}`, requestsPageSchema, {
     headers: asUser(userId),
   });
 }

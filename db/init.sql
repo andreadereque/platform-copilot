@@ -50,6 +50,11 @@ CREATE TABLE access_requests (
     decided_by text REFERENCES users,
     decided_at timestamptz
 );
+-- Keyset pagination: WHERE (created_at, id) < (...) ORDER BY created_at DESC, id DESC LIMIT n
+-- walks this index from the cursor on, so page 500 costs the same as page 1.
+CREATE INDEX access_requests_created_idx ON access_requests (created_at DESC, id DESC);
+-- The approvals panel lists requests per product (owner -> products -> requests).
+CREATE INDEX access_requests_product_idx ON access_requests (product);
 
 -- Append-only audit log: the database refuses UPDATE and DELETE, whoever asks.
 CREATE TABLE audit_log (
@@ -60,6 +65,7 @@ CREATE TABLE audit_log (
     kind            text NOT NULL,
     payload         jsonb NOT NULL
 );
+CREATE INDEX audit_log_ts_idx ON audit_log (ts DESC, id DESC);  -- keyset pagination
 
 CREATE FUNCTION audit_log_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

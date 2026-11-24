@@ -24,9 +24,13 @@ function chatReturns(events: Array<[string, unknown]>) {
   );
 }
 
+function page(items: unknown[], nextCursor: string | null = null) {
+  return HttpResponse.json({ items, next_cursor: nextCursor });
+}
+
 function requestsFor(lists: Record<string, unknown[]>) {
   return http.get("/api/access-requests", ({ request }) =>
-    HttpResponse.json(lists[request.headers.get("X-User-Id") ?? ""] ?? []),
+    page(lists[request.headers.get("X-User-Id") ?? ""] ?? []),
   );
 }
 
@@ -124,7 +128,7 @@ describe("App", () => {
     server.use(
       http.get("/api/users", () => HttpResponse.json(users)),
       http.get("/api/access-requests", ({ request }) =>
-        HttpResponse.json(lists[request.headers.get("X-User-Id") ?? ""] ?? []),
+        page(lists[request.headers.get("X-User-Id") ?? ""] ?? []),
       ),
       http.post("/api/access-requests/42/approve", () => {
         lists = {
@@ -176,7 +180,7 @@ describe("App", () => {
       http.get("/api/users", () => HttpResponse.json(users)),
       http.get("/api/access-requests", () => {
         calls += 1;
-        return HttpResponse.json([]);
+        return page([]);
       }),
       chatReturns(journey),
     );
@@ -187,6 +191,33 @@ describe("App", () => {
     );
     await screen.findByText(/2 pasos/);
     await waitFor(() => expect(calls).toBeGreaterThan(1));
+  });
+
+  it("loads the next page of requests with the cursor", async () => {
+    const cursors: Array<string | null> = [];
+    server.use(
+      http.get("/api/users", () => HttpResponse.json(users)),
+      http.get("/api/access-requests", ({ request }) => {
+        const cursor = new URL(request.url).searchParams.get("cursor");
+        cursors.push(cursor);
+        if (cursor === "c2") {
+          return page([decidedRequest]);
+        }
+        return page([pendingRequest], "c2");
+      }),
+    );
+    renderWithQuery(<App />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Cargar más" }),
+    );
+    expect(
+      await screen.findByText("#39 · hr_headcount_eu"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("#42 · sales_es_monthly")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Cargar más" }),
+    ).not.toBeInTheDocument();
+    expect(cursors).toEqual([null, "c2"]);
   });
 
   it("falls back to the first user and shows loading errors", async () => {

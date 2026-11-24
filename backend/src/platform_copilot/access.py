@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from platform_copilot import audit
 from platform_copilot.db import Pool
+from platform_copilot.pagination import Key, Page, decode_cursor, make_page
 
 Decision = Literal["approved", "rejected"]
 
@@ -76,15 +77,22 @@ async def get_request(pool: Pool, request_id: int) -> AccessRequest:
     return AccessRequest(**row)
 
 
-async def requests_for_owner(pool: Pool, owner: str) -> list[AccessRequest]:
-    """Pending requests first, then the 10 most recent decisions, for products this user owns."""
-    query = (
-        SELECT_REQUESTS
-        + " WHERE p.owner = %s ORDER BY (r.status = 'pending') DESC, r.id DESC LIMIT 20"
-    )
+async def requests_for_owner(
+    pool: Pool, owner: str, limit: int, cursor: str | None = None
+) -> Page[AccessRequest]:
+    """Requests for the products this user owns, newest first, one keyset page at a time."""
+    query = SELECT_REQUESTS + " WHERE p.owner = %(owner)s"
+    params: dict[str, object] = {"owner": owner, "limit": limit + 1}
+    if cursor is not None:
+        key = decode_cursor(cursor)
+        query += " AND (r.created_at, r.id) < (%(created_at)s, %(id)s)"
+        params.update(created_at=key.created_at, id=key.id)
+    query += " ORDER BY r.created_at DESC, r.id DESC LIMIT %(limit)s"
     async with pool.connection() as conn:
-        rows = await (await conn.execute(query, (owner,))).fetchall()
-    return [AccessRequest(**row) for row in rows]
+        rows = await (await conn.execute(query, params)).fetchall()
+    requests = [AccessRequest(**row) for row in rows]
+    keys = [Key(request.created_at, request.id) for request in requests]
+    return make_page(requests, keys, limit)
 
 
 async def decide(pool: Pool, request_id: int, decider: str, decision: Decision) -> AccessRequest:
