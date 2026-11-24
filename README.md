@@ -9,14 +9,20 @@ and quality is measured with evals in CI.
 > All users, documents and data products are fake. It runs free and local with
 > [Ollama](https://ollama.com); Claude is optional.
 
-**Stack:** FastAPI · PostgreSQL + pgvector · React + TypeScript (Vite) · Ollama (`qwen2.5`) or
-Claude · GitHub Actions.
+**Stack:** FastAPI · PostgreSQL + pgvector · React + TypeScript (Vite) · Keycloak (OIDC) ·
+Ollama (`qwen2.5`) or Claude · GitHub Actions.
+
+**Architecture, end to end and interview-oriented:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+(login with OAuth 2.0 + PKCE, keyset pagination, concurrency vs parallelism, async database
+driver, rate limiting, testing, scaling).
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    UI[React chat] -- "POST /api/chat (SSE)" --> API[FastAPI]
+    UI[React chat] -- "login: auth code + PKCE" --> KC[Keycloak<br/>OIDC]
+    UI -- "POST /api/chat (SSE)<br/>Bearer access token" --> API[FastAPI]
+    API -. "JWKS, cached" .-> KC
     API --> A{Agent loop<br/>max 5 steps}
     A <-- "messages + 3 tool schemas" --> LLM[(Ollama / Claude)]
     A -- search_docs --> R[(chunks<br/>pgvector + full-text)]
@@ -26,6 +32,12 @@ flowchart LR
     A --> L[(audit_log<br/>append-only)]
 ```
 
+Before any question, the user logs in with Keycloak (OAuth 2.0 authorization code + PKCE, via
+`oidc-client-ts`). Every API call carries the access token; the API validates it locally (RS256
+signature against Keycloak's cached public keys, issuer, audience, expiry) and takes the user and
+their **groups from the token**. `/api/chat` is rate-limited per user (token bucket, 429 with
+`Retry-After`).
+
 One question, step by step (what the browser receives as Server-Sent Events):
 
 | # | What happens | SSE events |
@@ -34,6 +46,11 @@ One question, step by step (what the browser receives as Server-Sent Events):
 | 2 | The model asks for `create_access_request`; a **pending** request is created | `tool_call`, `tool_result`, `approval_pending` |
 | 3 | The model answers; `[source-id]` markers become `[1]`, `[2]`, checked against what the tools returned | `step`, `token`…, `citation`, `done` |
 | 4 | The owner approves it in the approvals panel (`POST /api/access-requests/{id}/approve`) | — |
+
+The approvals panel and the audit log are paginated with **keyset cursors**
+(`?limit=&cursor=` → `{items, next_cursor}`), and hybrid search runs its vector and full-text
+queries **concurrently** (`asyncio.gather`, two pool connections). Why each, in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ### The three tools
 
@@ -49,17 +66,25 @@ results it can read and correct, instead of breaking the request.
 
 ## Run it
 
-Needs PostgreSQL 18 with pgvector, Ollama, [uv](https://docs.astral.sh/uv/) and Node 22.
+Needs PostgreSQL 18 with pgvector, Ollama, Docker (for Keycloak), [uv](https://docs.astral.sh/uv/)
+and Node 22.
 
 ```bash
 brew install postgresql@18 pgvector ollama && brew services start postgresql@18
 make ollama-setup        # qwen2.5:3b + nomic-embed-text (add: ollama pull qwen2.5:7b)
 make install
 make db seed             # schema, fake users, 40 data products, 21 docs embedded
+make keycloak            # Keycloak on :8080 with the realm imported
 make dev                 # API on :8000 (/docs), UI on :5173
 ```
 
-With Docker instead: `docker compose up -d` (PostgreSQL + Ollama), then `make seed dev`.
+Log in at http://localhost:5173 as any user in `seed/users.json` (e.g. `laura@sales`,
+`marta@finance` to approve, `dev@platform` to read the audit log); the demo password for all of
+them is `copilot`. They are fake users on a local Keycloak. After editing `seed/users.json`, run
+`make realm` to regenerate `keycloak/platform-copilot-realm.json`.
+
+With Docker for everything else too: `docker compose up -d` (PostgreSQL, Keycloak, Ollama), then
+`make seed dev`.
 To use Claude: `LLM_PROVIDER=claude` and `ANTHROPIC_API_KEY` in `backend/.env` (see `.env.example`).
 
 Commands: `make test` (backend + frontend), `make eval` (real model), `make help`.
@@ -67,10 +92,13 @@ Commands: `make test` (backend + frontend), `make eval` (real model), `make help
 ## Tests and evals
 
 - **Backend:** pytest against a real PostgreSQL with pgvector, **never** a real LLM or the network
-  (a scripted `FakeProvider`, a deterministic `FakeEmbedder`, mock HTTP transports for Ollama and
-  the Anthropic SDK). 100 % line and branch coverage, ruff, mypy strict.
+  (a scripted `FakeProvider`, a deterministic `FakeEmbedder`, mock HTTP transports for Ollama,
+  the Anthropic SDK and Keycloak's JWKS endpoint; access tokens signed in the test with a
+  generated RSA key; a fake clock for the rate limiter). 100 % line and branch coverage, ruff,
+  mypy strict.
 - **Frontend:** Vitest + Testing Library with MSW at the network boundary (including a streamed SSE
-  body cut mid-event). 100 % coverage, ESLint without ternaries.
+  body cut mid-event) and a fake `Auth` instead of redirects to Keycloak. 100 % coverage, ESLint
+  without ternaries.
 - **Evals** (`evals/cases.json`, `make eval`): 25 golden cases run against the real model.
 
 | Cases | How many | What is checked |
@@ -111,6 +139,15 @@ What the numbers say, and what is still open:
 
 ## Design decisions
 
+- **OIDC login, validated locally.** The UI is a public client (authorization code + PKCE); the API
+  is a resource server that checks the JWT against cached public keys, with no call to Keycloak
+  per request. Groups come from the token, so the identity provider decides authorization.
+- **Keyset pagination.** `WHERE (created_at, id) < cursor ORDER BY created_at DESC, id DESC LIMIT
+  n+1` with a matching index: every page costs the same and inserts do not shift pages.
+- **Concurrent hybrid search.** The two retrieval queries are I/O-bound, so `asyncio.gather` on two
+  connections halves the wait without threads.
+- **Rate limit on the expensive endpoint.** A per-user token bucket in front of the LLM; in memory
+  on purpose (one process), Redis when there are replicas.
 - **pgvector, not a separate vector database.** One PostgreSQL for docs, catalog, requests and audit;
   at this scale it is plenty, and it keeps permissions and transactions in one place.
 - **Hybrid search.** Exact names like `sales_es_monthly` are found by full-text; paraphrased
@@ -137,7 +174,12 @@ What the numbers say, and what is still open:
 
 | Here | In production |
 |---|---|
-| A user selector (`X-User-Id` header) | Corporate SSO (OIDC); groups and owners from the directory and the real catalog |
+| Keycloak in a container with fake users and one demo password | The company's IdP (Entra ID, Okta, corporate Keycloak) federated with the directory; owners from the real catalog |
+| Tokens in `sessionStorage` (SPA, PKCE) | A BFF that keeps tokens server-side and gives the browser an `HttpOnly` cookie |
+| A revoked user keeps access until the 5-minute token expires | Token introspection or a revocation list for sensitive actions |
+| Rate limit buckets in process memory | Redis (or the API gateway), shared by all replicas, plus a token budget per team |
+| One API process, one database | N stateless API replicas, PgBouncer, read replicas for audit/catalog/search reads |
+| `audit_log` grows forever | Partitioned by month, old partitions archived |
 | Ollama on a laptop | Models inside the company's cloud account behind a shared LLM gateway: quotas and cost per team, PII masking, tracing |
 | Final answer sent in chunks after the model finishes | True token streaming from the provider |
 | `make dev` | Non-root images, Helm chart and Argo CD on OpenShift; managed PostgreSQL created with Terraform |
@@ -151,15 +193,21 @@ What the numbers say, and what is still open:
 ```
 backend/src/platform_copilot/
   main.py           app factory, routes
+  auth.py           OIDC access-token validation (JWKS, RS256, iss/aud/exp)
+  pagination.py     keyset cursors
+  ratelimit.py      per-user token bucket for /api/chat
+  keycloak_realm.py realm generator from seed/users.json
   agent.py          the loop, system prompt, citation check
   tools/            search_docs, query_catalog, create_access_request
-  rag/              chunking, ingest, hybrid search (RRF)
+  rag/              chunking, ingest, hybrid search (concurrent queries + RRF)
   sql_guard.py      sqlglot checks
   llm/              Ollama, Claude (anthropic SDK), fake
   access.py         access requests and decisions
   audit.py          append-only audit log
   evaluation.py     eval metrics (tested)
-frontend/src/       chat (SSE parser + reducer), approvals panel
+frontend/src/       login (auth/oidc.ts), chat (SSE parser + reducer), approvals panel
+keycloak/           realm imported by Keycloak (generated)
+docs/               ARCHITECTURE.md
 db/init.sql         tables, catalog_ro role, append-only trigger
 seed/               fake users, data products and docs
 evals/              cases.json, run.py, results/
