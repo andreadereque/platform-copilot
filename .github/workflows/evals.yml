@@ -24,13 +24,13 @@ jobs:
       postgres:
         image: pgvector/pgvector:pg18
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust   # throwaway CI database, no password
           POSTGRES_DB: platform_copilot
         ports: ["5432:5432"]
         options: >-
           --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/platform_copilot
+      DATABASE_URL: postgresql://postgres@localhost:5432/platform_copilot
       LLM_MODEL: qwen2.5:7b
       EVAL_JUDGE_MODEL: qwen2.5:7b
     steps:
