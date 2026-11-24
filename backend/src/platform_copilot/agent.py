@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from platform_copilot import audit, prompts
 from platform_copilot.context import clip, fit_history
+from platform_copilot.guards import injection_suspected
 from platform_copilot.llm.base import (
     ChatReply,
     LLMError,
@@ -113,7 +114,15 @@ async def _loop(
     tokens = 0
     cost = 0.0
     started = time.perf_counter()
-    await _audit(ctx, "question", {"text": question, "prompt_version": f"system.{version}"})
+    flags = []
+    if injection_suspected(question):
+        flags.append("prompt_injection")  # flagged for monitoring, not blocked (see guards.py)
+        span.set_attribute("guard.injection_suspected", True)
+    await _audit(
+        ctx,
+        "question",
+        {"text": question, "prompt_version": f"system.{version}", "flags": flags},
+    )
 
     for step in range(1, max_steps + 1):
         yield Event("step", {"n": step, "max": max_steps})

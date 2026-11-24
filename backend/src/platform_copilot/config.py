@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql://localhost/platform_copilot"
-    llm_provider: Literal["ollama", "claude", "fake"] = "ollama"
+    llm_provider: Literal["ollama", "claude", "vertex", "fake"] = "ollama"
     llm_model: str = "qwen2.5:3b"
     embed_provider: Literal["ollama", "fake"] = "ollama"
     embed_model: str = "nomic-embed-text"
@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     catalog_timeout_ms: int = 2000
     catalog_row_limit: int = 50
     log_level: str = "INFO"
+    # GCP: Gemini on Vertex AI, with Application Default Credentials.
+    gcp_project: str = ""
+    gcp_location: str = "europe-west1"
+    vertex_model: str = "gemini-2.5-flash"
+    # Safety nets: a local fallback model, and PII masked before it reaches an external model.
+    llm_fallback: Literal["none", "ollama"] = "none"
+    mask_pii_external: bool = True
     # OIDC: the API accepts access tokens issued by this realm for this audience.
     oidc_issuer: str = "http://localhost:8080/realms/platform-copilot"
     oidc_audience: str = "platform-copilot-api"

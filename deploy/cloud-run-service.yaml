@@ -1,0 +1,38 @@
+# Cloud Run service for the API (Knative format): `gcloud run services replace deploy/cloud-run-service.yaml`
+# Placeholders in <angle brackets>. No secret values here: they come from Secret Manager.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: platform-copilot-api
+  labels:
+    team: data-science
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"      # no cold start for the first user
+        autoscaling.knative.dev/maxScale: "10"     # caps cost and database connections (10 x pool 5)
+        run.googleapis.com/cloudsql-instances: <project>:europe-west1:platform-copilot
+        run.googleapis.com/cpu-throttling: "false" # SSE streams keep working after the response starts
+    spec:
+      serviceAccountName: platform-copilot-api@<project>.iam.gserviceaccount.com  # Vertex AI user, Cloud SQL client
+      containerConcurrency: 40                     # async: one instance serves many waiting requests
+      timeoutSeconds: 300                          # long agent runs and streams
+      containers:
+        - image: europe-west1-docker.pkg.dev/<project>/platform-copilot/api:<git-sha>
+          ports: [{containerPort: 8080}]
+          resources:
+            limits: {cpu: "1", memory: 1Gi}
+          env:
+            - {name: LLM_PROVIDER, value: vertex}
+            - {name: GCP_PROJECT, value: <project>}
+            - {name: GCP_LOCATION, value: europe-west1}
+            - {name: OIDC_ISSUER, value: https://<idp>/realms/<realm>}
+            - {name: OTEL_EXPORTER, value: none}  # in production: OTLP to the collector / Cloud Trace
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: platform-copilot-database-url, key: latest}
+          startupProbe:
+            httpGet: {path: /healthz}
+          livenessProbe:
+            httpGet: {path: /healthz}
