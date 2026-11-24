@@ -145,7 +145,12 @@ async def ask(
     snapshot = await graph.aget_state(config)
     first_turn: list[Message] = []
     if not snapshot.values:
-        first_turn = [{"role": "system", "content": system_prompt(ctx.user)}]
+        first_turn = [
+            {
+                "role": "system",
+                "content": system_prompt(ctx.user, ctx.settings.system_prompt_version),
+            }
+        ]
     await audit.record(ctx.pool, ctx.user.id, ctx.conversation_id, "question",
                        {"text": question, "engine": "langgraph"})  # fmt: skip
     state = {"messages": [*first_turn, {"role": "user", "content": question}], "steps": 0}
