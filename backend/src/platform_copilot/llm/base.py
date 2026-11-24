@@ -28,6 +28,7 @@ class ChatReply:
     model: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
+    cost_usd: float = 0.0  # filled in by observability.TracedProvider from the price settings
     raw: Any = None  # provider content to send back unchanged on the next turn
 
 

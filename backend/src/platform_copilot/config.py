@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     # /api/chat rate limit per user: a burst of `chat_burst` questions, then `chat_per_minute`.
     chat_burst: int = 5
     chat_per_minute: float = 10
+    # Observability: "console" prints the spans; prices in USD per million tokens (0 = local).
+    otel_exporter: Literal["none", "console"] = "none"
+    llm_price_input_per_mtok: float = 0.0
+    llm_price_output_per_mtok: float = 0.0
 
 
 @lru_cache

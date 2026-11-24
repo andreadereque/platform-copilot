@@ -7,6 +7,10 @@ from pathlib import Path
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from psycopg.rows import dict_row
 from tokens import make_validator
 
@@ -21,6 +25,24 @@ ROOT = Path(__file__).resolve().parents[2]
 TEST_DB_URL = os.environ.get("TEST_DATABASE_URL", "postgresql://localhost/platform_copilot_test")
 ADMIN_URL = os.environ.get("TEST_ADMIN_URL", "postgresql://localhost/postgres")
 TABLES = "audit_log, access_requests, chunks, documents, data_products, users"
+
+
+EXPORTER = InMemorySpanExporter()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def tracing() -> None:
+    """Spans go to memory, so tests can check what was traced. Set once: OpenTelemetry allows
+    one global tracer provider per process."""
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(EXPORTER))
+    trace.set_tracer_provider(provider)
+
+
+@pytest.fixture
+def spans() -> InMemorySpanExporter:
+    EXPORTER.clear()
+    return EXPORTER
 
 
 @pytest.fixture(scope="session", autouse=True)

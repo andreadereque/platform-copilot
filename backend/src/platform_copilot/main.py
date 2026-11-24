@@ -12,6 +12,7 @@ from platform_copilot.db import make_pool
 from platform_copilot.embeddings import Embedder, build_embedder
 from platform_copilot.llm.base import LLMProvider
 from platform_copilot.llm.factory import build_llm
+from platform_copilot.observability import Prices, TracedProvider, setup_tracing
 from platform_copilot.ratelimit import RateLimiter
 
 
@@ -28,6 +29,10 @@ def create_app(
         settings = get_settings()
     if llm is None:
         llm = build_llm(settings)
+    if settings.otel_exporter == "console":
+        setup_tracing()
+    prices = Prices(settings.llm_price_input_per_mtok, settings.llm_price_output_per_mtok)
+    llm = TracedProvider(llm, prices)
     if embedder is None:
         embedder = build_embedder(settings)
     if token_validator is None:

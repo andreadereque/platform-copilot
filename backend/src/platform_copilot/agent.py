@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from opentelemetry.trace import Span, Status, StatusCode
 from pydantic import ValidationError
 
 from platform_copilot import audit
@@ -23,6 +24,7 @@ from platform_copilot.llm.base import (
     ToolCall,
     assistant_message,
 )
+from platform_copilot.observability import child_of, elapsed_ms, tracer
 from platform_copilot.tools import create_access_request, query_catalog, search_docs
 from platform_copilot.tools.base import Tool, ToolContext, ToolError
 from platform_copilot.users import User
@@ -81,8 +83,39 @@ async def run_agent(
     llm: LLMProvider,
     tools: dict[str, Tool] | None = None,
 ) -> AsyncIterator[Event]:
+    """Run the agent and trace it: one `agent.run` span, parent of every model and tool span."""
     if tools is None:
         tools = DEFAULT_TOOLS
+    span = tracer.start_span("agent.run")
+    span.set_attribute("user.id", ctx.user.id)
+    span.set_attribute("conversation.id", ctx.conversation_id)
+    span.set_attribute("gen_ai.request.model", llm.model)
+    try:
+        async for event in _loop(question, history, ctx, llm, tools, span):
+            _record_outcome(span, event)
+            yield event
+    finally:
+        span.end()
+
+
+def _record_outcome(span: Span, event: Event) -> None:
+    if event.name == "error":
+        span.set_attribute("outcome", event.data["code"])
+        span.set_status(Status(StatusCode.ERROR, event.data["message"]))
+    if event.name == "done":
+        span.set_attribute("outcome", "answered")
+        for key in ("steps", "tokens", "ms", "cost_usd"):
+            span.set_attribute(key, event.data[key])
+
+
+async def _loop(
+    question: str,
+    history: list[Message],
+    ctx: ToolContext,
+    llm: LLMProvider,
+    tools: dict[str, Tool],
+    span: Span,
+) -> AsyncIterator[Event]:
     max_steps = ctx.settings.max_steps
     messages: list[Message] = [
         {"role": "system", "content": system_prompt(ctx.user)},
@@ -92,18 +125,21 @@ async def run_agent(
     schemas = [tool.schema() for tool in tools.values()]
     retrieved: list[str] = []
     tokens = 0
+    cost = 0.0
     started = time.perf_counter()
     await _audit(ctx, "question", {"text": question})
 
     for step in range(1, max_steps + 1):
         yield Event("step", {"n": step, "max": max_steps})
         try:
-            reply = await llm.chat(messages, schemas)
+            with child_of(span):
+                reply = await llm.chat(messages, schemas)
         except LLMError as error:
             await _audit(ctx, "error", {"code": "llm_error", "message": str(error)})
             yield Event("error", {"code": "llm_error", "message": str(error)})
             return
         tokens += reply.input_tokens + reply.output_tokens
+        cost += reply.cost_usd
         if not reply.tool_calls and _needs_fallback(step, ctx, tools):
             # Measured with qwen2.5:3b: it often answers "I don't know" without searching. If the
             # first reply used no tool, search the docs with the question and let it try again.
@@ -111,17 +147,18 @@ async def run_agent(
             messages.append(
                 assistant_message(ChatReply("", [fallback], raw=_raw_tool_use(fallback)))
             )
-            async for event in _execute(fallback, ctx, tools, retrieved, messages):
+            async for event in _execute(fallback, ctx, tools, retrieved, messages, span):
                 yield event
             continue
         if not reply.tool_calls:
-            stats = {"steps": step, "tokens": tokens, "model": llm.model, "started": started}
+            stats = {"steps": step, "tokens": tokens, "model": llm.model, "started": started,
+                     "cost_usd": cost}  # fmt: skip
             async for event in _finish(reply.text, retrieved, ctx, stats):
                 yield event
             return
         messages.append(assistant_message(reply))
         for call in reply.tool_calls:
-            async for event in _execute(call, ctx, tools, retrieved, messages):
+            async for event in _execute(call, ctx, tools, retrieved, messages, span):
                 yield event
 
     message = f"Stopped after {max_steps} steps without a final answer"
@@ -144,10 +181,12 @@ async def _execute(
     tools: dict[str, Tool],
     retrieved: list[str],
     messages: list[Message],
+    span: Span,
 ) -> AsyncIterator[Event]:
     """Run one tool call: stream its events, audit it and append its result for the model."""
     yield Event("tool_call", {"id": call.id, "tool": call.name, "args": call.arguments})
-    outcome = await run_tool(call, ctx, tools)
+    with child_of(span):
+        outcome = await run_tool(call, ctx, tools)
     await _audit(
         ctx,
         "tool_call",
@@ -174,7 +213,20 @@ async def _execute(
 
 
 async def run_tool(call: ToolCall, ctx: ToolContext, tools: dict[str, Tool]) -> ToolOutcome:
-    """Run one tool call. Every failure becomes an error result the model can read and fix."""
+    """Run one tool call, traced as `tool <name>` with its latency and outcome."""
+    with tracer.start_as_current_span(f"tool {call.name}") as span:
+        started = time.perf_counter()
+        outcome = await _run_tool(call, ctx, tools)
+        span.set_attribute("gen_ai.tool.name", call.name)
+        span.set_attribute("ok", outcome.ok)
+        span.set_attribute("latency_ms", elapsed_ms(started))
+        if not outcome.ok:
+            span.set_status(Status(StatusCode.ERROR, outcome.content["error"]))
+        return outcome
+
+
+async def _run_tool(call: ToolCall, ctx: ToolContext, tools: dict[str, Tool]) -> ToolOutcome:
+    """Every failure becomes an error result the model can read and fix."""
     tool = tools.get(call.name)
     if tool is None:
         return _failure(f"Unknown tool {call.name}. Available: {', '.join(tools)}")
@@ -207,17 +259,19 @@ async def _finish(
         yield Event("token", {"text": "".join(words[start : start + WORDS_PER_TOKEN_EVENT])})
     for citation in citations:
         yield Event("citation", citation)
-    await _audit(ctx, "answer", {"text": answer, "citations": citations, "dropped": dropped})
-    elapsed_ms = int((time.perf_counter() - stats["started"]) * 1000)
-    yield Event(
-        "done",
-        {
-            "steps": stats["steps"],
-            "tokens": stats["tokens"],
-            "ms": elapsed_ms,
-            "model": stats["model"],
-        },
+    done = {
+        "steps": stats["steps"],
+        "tokens": stats["tokens"],
+        "ms": elapsed_ms(stats["started"]),
+        "model": stats["model"],
+        "cost_usd": stats["cost_usd"],
+    }
+    # Latency, tokens and cost go to the audit log too: they are what monitoring and the
+    # drift report query, per day and per model.
+    await _audit(
+        ctx, "answer", {"text": answer, "citations": citations, "dropped": dropped, **done}
     )
+    yield Event("done", done)
 
 
 def resolve_citations(
